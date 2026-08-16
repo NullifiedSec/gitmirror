@@ -5,8 +5,8 @@ import "testing"
 func TestValidateAllowsSameFullNameAcrossProviders(t *testing.T) {
 	cfg := Config{Pairs: []Pair{
 		{
-			Name: "cross-provider",
-			Left: Repo{Provider: ProviderGitHub, FullName: "owner/repo", URL: "git@github.com:owner/repo.git"},
+			Name:  "cross-provider",
+			Left:  Repo{Provider: ProviderGitHub, FullName: "owner/repo", URL: "git@github.com:owner/repo.git"},
 			Right: Repo{Provider: ProviderGitea, FullName: "owner/repo", URL: "git@gitea.example:owner/repo.git"},
 		},
 	}}
@@ -18,8 +18,8 @@ func TestValidateAllowsSameFullNameAcrossProviders(t *testing.T) {
 func TestValidateRejectsUnsupportedProvider(t *testing.T) {
 	cfg := Config{Pairs: []Pair{
 		{
-			Name: "bad-provider",
-			Left: Repo{Provider: "gitlab", FullName: "owner/repo", URL: "git@example:owner/repo.git"},
+			Name:  "bad-provider",
+			Left:  Repo{Provider: "gitlab", FullName: "owner/repo", URL: "git@example:owner/repo.git"},
 			Right: Repo{Provider: ProviderGitHub, FullName: "other/repo", URL: "git@github.com:other/repo.git"},
 		},
 	}}
