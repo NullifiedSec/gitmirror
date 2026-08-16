@@ -43,7 +43,7 @@ func TestBootstrapSeedsCompletelyEmptyRightFromLeft(t *testing.T) {
 		t.Fatalf("empty right develop was not seeded: got %s want %s", got, developSHA)
 	}
 
-	repoDir := filepath.Join(root, "repos", "test.git")
+	repoDir := filepath.Join(root, "data", "repos", "test.git")
 	if _, err := os.Stat(filepath.Join(repoDir, "gitmirror-bootstrap-v2")); err != nil {
 		t.Fatalf("bootstrap marker: %v", err)
 	}
@@ -120,7 +120,7 @@ func TestBootstrapPreservesBothWhenEitherAlreadyContainsRefs(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	repoDir := filepath.Join(root, "repos", "test.git")
+	repoDir := filepath.Join(root, "data", "repos", "test.git")
 	if got := gitOut(t, repoDir, "rev-parse", "refs/gitmirror/bootstrap/left/main"); got != leftSHA {
 		t.Fatalf("left bootstrap sha = %s, want %s", got, leftSHA)
 	}
