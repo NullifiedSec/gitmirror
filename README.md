@@ -1,29 +1,30 @@
 # gitmirror
 
-Bidirectional Git/GitHub synchronization bridge.
+Bidirectional Git repository synchronization bridge.
 
-The current implementation is an intentionally small first slice: it accepts authenticated GitHub webhooks, durably queues deliveries, and safely reconciles branch refs between configured repository pairs.
+The current implementation accepts authenticated GitHub and Gitea webhooks, durably queues deliveries, and safely reconciles branch refs between configured repository pairs. A pair can be GitHub ↔ GitHub, GitHub ↔ Gitea, or Gitea ↔ Gitea.
 
 ## Current scope
 
+- GitHub and Gitea webhook ingestion
 - HMAC-SHA256 verification of `X-Hub-Signature-256`
-- delivery idempotency through `X-GitHub-Delivery`
+- provider-scoped delivery idempotency
 - durable file-backed queue with crash recovery and bounded retries
 - bidirectional branch creation and fast-forward propagation
 - stale push events become no-ops
 - branch divergence is refused rather than force-pushed
 - branch deletion only propagates when the destination still points at the expected pre-delete SHA
 - Git remote URLs are redacted from command errors
-- non-push GitHub events are accepted and safely ignored for now
+- non-push events are accepted and safely ignored for now
 
-Tags, pull requests, issues, comments, reviews, releases, and richer conflict workflows are planned follow-up layers. Secrets, deploy keys, Actions secrets, and other credentials should never be mirrored as repository metadata.
+Tags, pull requests, issues, comments, reviews, releases, richer conflict workflows, and more-than-two-way mirror groups are planned follow-up layers. Secrets, deploy keys, Actions secrets, and other credentials should never be mirrored as repository metadata.
 
 ## Requirements
 
 - Go 1.26+
 - Git available in `PATH`
 - credentials that allow fetch/push to both repositories
-- HTTPS endpoint reachable by GitHub for `/webhooks/github`
+- HTTPS endpoint reachable by the configured providers
 
 SSH remotes are recommended for the initial deployment because they avoid embedding credentials in repository URLs. If HTTPS URLs contain credentials, gitmirror redacts configured remote URLs from captured Git stderr, but external process inspection and local Git config are separate concerns.
 
@@ -37,37 +38,45 @@ Copy `gitmirror.example.json` to `gitmirror.json` and configure each repository 
   "data_dir": ".gitmirror",
   "pairs": [
     {
-      "name": "example",
+      "name": "github-gitea-example",
       "left": {
+        "provider": "github",
         "full_name": "upstream-owner/private-repo",
         "url": "git@github.com:upstream-owner/private-repo.git"
       },
       "right": {
-        "full_name": "your-org/private-repo",
-        "url": "git@github.com:your-org/private-repo.git"
+        "provider": "gitea",
+        "full_name": "mirror-owner/private-repo",
+        "url": "git@git.example.com:mirror-owner/private-repo.git"
       }
     }
   ]
 }
 ```
 
-A repository may appear in only one pair in this first version. The daemon is also currently designed as a single active process for a given `data_dir`.
+Supported providers are currently `github` and `gitea`. Omitting `provider` preserves the original behavior and defaults that repository to `github`.
+
+Repository identity is provider-aware, so `owner/repo` on GitHub and `owner/repo` on Gitea are treated as different repositories. A repository may appear in only one pair in this first version. The daemon is also currently designed as a single active process for a given `data_dir`.
 
 ## Run
 
-Set the same webhook secret in GitHub and the daemon:
+Set webhook secrets for the providers used by your configuration:
 
 ```bash
-export GITMIRROR_WEBHOOK_SECRET='replace-me'
+export GITMIRROR_GITHUB_WEBHOOK_SECRET='replace-me'
+export GITMIRROR_GITEA_WEBHOOK_SECRET='replace-me-too'
 go run ./cmd/gitmirror -config gitmirror.json
 ```
+
+`GITMIRROR_WEBHOOK_SECRET` remains supported as a legacy alias for the GitHub webhook secret.
 
 Endpoints:
 
 - `POST /webhooks/github` — GitHub webhook receiver
+- `POST /webhooks/gitea` — Gitea webhook receiver
 - `GET /healthz` — liveness endpoint
 
-Configure a GitHub repository webhook on both sides with the push event enabled and point both repositories at the same receiver URL.
+Configure push webhooks on both sides of a pair. Each provider should use its corresponding endpoint and matching secret.
 
 ## Conflict behavior
 
