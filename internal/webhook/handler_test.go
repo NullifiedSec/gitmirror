@@ -1,6 +1,7 @@
 package webhook
 
 import (
+	"bytes"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -51,7 +52,7 @@ func TestHandlerEnqueuesValidatedDelivery(t *testing.T) {
 	q := &fakeQueue{}
 	h := New("secret", q)
 	body := []byte(`{"ref":"refs/heads/main"}`)
-	r := httptest.NewRequest(http.MethodPost, "/webhooks/github", bytesReader(body))
+	r := httptest.NewRequest(http.MethodPost, "/webhooks/github", bytes.NewReader(body))
 	r.Header.Set("X-Hub-Signature-256", SignForTest([]byte("secret"), body))
 	r.Header.Set("X-GitHub-Delivery", "delivery-1")
 	r.Header.Set("X-GitHub-Event", "push")
@@ -64,21 +65,3 @@ func TestHandlerEnqueuesValidatedDelivery(t *testing.T) {
 		t.Fatalf("unexpected queued event: %#v", q.events)
 	}
 }
-
-func bytesReader(b []byte) *reader { return &reader{b: b} }
-
-type reader struct {
-	b []byte
-	i int
-}
-
-func (r *reader) Read(p []byte) (int, error) {
-	if r.i >= len(r.b) {
-		return 0, io.EOF
-	}
-	n := copy(p, r.b[r.i:])
-	r.i += n
-	return n, nil
-}
-
-func (r *reader) Close() error { return nil }
