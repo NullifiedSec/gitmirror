@@ -56,6 +56,9 @@ func serve(configPath string) {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if err := processor.Bootstrap(ctx); err != nil {
+		log.Fatalf("bootstrap configured repositories: %v", err)
+	}
 	go worker(ctx, q, processor)
 	go poller.New(cfg, q).Run(ctx)
 
