@@ -20,11 +20,20 @@ import (
 
 func main() {
 	configPath := flag.String("config", "gitmirror.toml", "path to TOML or JSON configuration file")
+	approveID := flag.String("approve", "", "approve one pending HIL branch transition by ID and exit")
 	flag.Parse()
 
 	cfg, err := config.Load(*configPath)
 	if err != nil {
 		log.Fatalf("load config: %v", err)
+	}
+
+	if *approveID != "" {
+		if err := syncer.New(cfg).Approve(context.Background(), *approveID); err != nil {
+			log.Fatalf("approve %s: %v", *approveID, err)
+		}
+		log.Printf("approved %s", *approveID)
+		return
 	}
 
 	githubSecret := os.Getenv("GITMIRROR_GITHUB_WEBHOOK_SECRET")
