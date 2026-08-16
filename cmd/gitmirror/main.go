@@ -111,8 +111,8 @@ func worker(ctx context.Context, q *queue.Queue, p processor) {
 				}
 				continue
 			}
-			if err := q.Complete(e.Delivery); err != nil {
-				log.Printf("queue completion for %s: %v", e.Delivery, err)
+			if err := q.Complete(e); err != nil {
+				log.Printf("queue completion for %s/%s: %v", e.Provider, e.Delivery, err)
 			}
 		}
 	}
