@@ -144,3 +144,16 @@ func (c Config) UsesProvider(provider string) bool {
 	}
 	return false
 }
+
+func (c Config) RequiresWebhook(provider string) bool {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	for _, p := range c.Pairs {
+		if strings.EqualFold(p.Left.Provider, provider) && !p.Left.Polling {
+			return true
+		}
+		if strings.EqualFold(p.Right.Provider, provider) && !p.Right.Polling {
+			return true
+		}
+	}
+	return false
+}
