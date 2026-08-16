@@ -7,6 +7,11 @@ import (
 	"strings"
 )
 
+const (
+	ProviderGitHub = "github"
+	ProviderGitea  = "gitea"
+)
+
 type Config struct {
 	Listen  string `json:"listen"`
 	DataDir string `json:"data_dir"`
@@ -20,6 +25,7 @@ type Pair struct {
 }
 
 type Repo struct {
+	Provider string `json:"provider,omitempty"`
 	FullName string `json:"full_name"`
 	URL      string `json:"url"`
 }
@@ -38,6 +44,14 @@ func Load(path string) (Config, error) {
 	}
 	if c.DataDir == "" {
 		c.DataDir = ".gitmirror"
+	}
+	for i := range c.Pairs {
+		if c.Pairs[i].Left.Provider == "" {
+			c.Pairs[i].Left.Provider = ProviderGitHub
+		}
+		if c.Pairs[i].Right.Provider == "" {
+			c.Pairs[i].Right.Provider = ProviderGitHub
+		}
 	}
 	if err := c.Validate(); err != nil {
 		return Config{}, err
@@ -60,15 +74,32 @@ func (c Config) Validate() error {
 		}
 		seenNames[p.Name] = struct{}{}
 		for side, r := range map[string]Repo{"left": p.Left, "right": p.Right} {
+			provider := strings.ToLower(strings.TrimSpace(r.Provider))
+			if provider == "" {
+				provider = ProviderGitHub
+			}
+			if provider != ProviderGitHub && provider != ProviderGitea {
+				return fmt.Errorf("pairs[%d].%s has unsupported provider %q", i, side, r.Provider)
+			}
 			if strings.Count(r.FullName, "/") != 1 || strings.TrimSpace(r.URL) == "" {
 				return fmt.Errorf("pairs[%d].%s requires full_name owner/repo and url", i, side)
 			}
-			key := strings.ToLower(r.FullName)
+			key := provider + ":" + strings.ToLower(r.FullName)
 			if _, ok := seenRepos[key]; ok {
-				return fmt.Errorf("repository %q appears in more than one pair", r.FullName)
+				return fmt.Errorf("repository %q on %s appears in more than one pair", r.FullName, provider)
 			}
 			seenRepos[key] = struct{}{}
 		}
 	}
 	return nil
+}
+
+func (c Config) UsesProvider(provider string) bool {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	for _, p := range c.Pairs {
+		if strings.EqualFold(p.Left.Provider, provider) || strings.EqualFold(p.Right.Provider, provider) {
+			return true
+		}
+	}
+	return false
 }
