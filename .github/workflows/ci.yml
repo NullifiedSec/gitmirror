@@ -27,3 +27,12 @@ jobs:
         run: go vet ./...
       - name: Test
         run: go test ./...
+      - name: Verify systemd unit
+        run: |
+          go build -trimpath -o /tmp/gitmirror-ci ./cmd/gitmirror
+          sudo install -o root -g root -m 0755 /tmp/gitmirror-ci /usr/local/bin/gitmirror
+          sudo useradd --system --home-dir /var/lib/gitmirror --shell /usr/sbin/nologin gitmirror
+          sudo install -d -o root -g gitmirror -m 0750 /etc/gitmirror
+          sudo install -d -o gitmirror -g gitmirror -m 0700 /var/lib/gitmirror
+          sudo touch /etc/gitmirror/gitmirror.toml
+          sudo systemd-analyze verify deploy/systemd/gitmirror.service
