@@ -25,9 +25,17 @@ func main() {
 	if err != nil {
 		log.Fatalf("load config: %v", err)
 	}
-	secret := os.Getenv("GITMIRROR_WEBHOOK_SECRET")
-	if secret == "" {
-		log.Fatal("GITMIRROR_WEBHOOK_SECRET is required")
+
+	githubSecret := os.Getenv("GITMIRROR_GITHUB_WEBHOOK_SECRET")
+	if githubSecret == "" {
+		githubSecret = os.Getenv("GITMIRROR_WEBHOOK_SECRET")
+	}
+	giteaSecret := os.Getenv("GITMIRROR_GITEA_WEBHOOK_SECRET")
+	if cfg.UsesProvider(config.ProviderGitHub) && githubSecret == "" {
+		log.Fatal("GITMIRROR_GITHUB_WEBHOOK_SECRET (or legacy GITMIRROR_WEBHOOK_SECRET) is required")
+	}
+	if cfg.UsesProvider(config.ProviderGitea) && giteaSecret == "" {
+		log.Fatal("GITMIRROR_GITEA_WEBHOOK_SECRET is required")
 	}
 
 	q := queue.New(cfg.DataDir)
@@ -41,7 +49,12 @@ func main() {
 	go worker(ctx, q, processor)
 
 	mux := http.NewServeMux()
-	mux.Handle("POST /webhooks/github", webhook.New(secret, q))
+	if githubSecret != "" {
+		mux.Handle("POST /webhooks/github", webhook.New(webhook.ProviderGitHub, githubSecret, q))
+	}
+	if giteaSecret != "" {
+		mux.Handle("POST /webhooks/gitea", webhook.New(webhook.ProviderGitea, giteaSecret, q))
+	}
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok\n"))
@@ -92,7 +105,7 @@ func worker(ctx context.Context, q *queue.Queue, p processor) {
 				continue
 			}
 			if err := p.Process(ctx, e); err != nil {
-				log.Printf("event %s (%s) attempt %d failed: %v", e.Delivery, e.Type, e.Attempts, err)
+				log.Printf("event %s/%s (%s) attempt %d failed: %v", e.Provider, e.Delivery, e.Type, e.Attempts, err)
 				if failErr := q.Fail(e); failErr != nil {
 					log.Printf("queue failure transition for %s: %v", e.Delivery, failErr)
 				}
