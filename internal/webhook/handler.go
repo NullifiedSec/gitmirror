@@ -49,10 +49,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	accepted, err := h.queue.Enqueue(queue.Event{
-		Delivery: delivery,
-		Type: eventType,
+		Delivery:   delivery,
+		Type:       eventType,
 		ReceivedAt: time.Now().UTC(),
-		Body: body,
+		Body:       body,
 	})
 	if err != nil {
 		http.Error(w, "failed to persist event", http.StatusInternalServerError)
