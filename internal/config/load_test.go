@@ -65,6 +65,57 @@ func TestLoadJSONCompatibility(t *testing.T) {
 	}
 }
 
+func TestLoadRejectsUnknownFields(t *testing.T) {
+	tests := []struct {
+		name    string
+		file    string
+		content string
+	}{
+		{
+			name: "toml",
+			file: "gitmirror.toml",
+			content: `data_dri = ".gitmirror"
+[[pairs]]
+name = "example"
+[pairs.left]
+full_name = "left/repo"
+url = "git@github.com:left/repo.git"
+[pairs.right]
+full_name = "right/repo"
+url = "git@github.com:right/repo.git"
+`,
+		},
+		{
+			name: "json",
+			file: "gitmirror.json",
+			content: `{"data_dri":".gitmirror","pairs":[{"name":"example","left":{"full_name":"left/repo","url":"git@github.com:left/repo.git"},"right":{"full_name":"right/repo","url":"git@github.com:right/repo.git"}}]}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), tt.file)
+			if err := os.WriteFile(path, []byte(tt.content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Load(path); err == nil {
+				t.Fatal("Load() accepted an unknown config field")
+			}
+		})
+	}
+}
+
+func TestLoadRejectsTrailingJSONValue(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "gitmirror.json")
+	content := `{"pairs":[{"name":"example","left":{"full_name":"left/repo","url":"git@github.com:left/repo.git"},"right":{"full_name":"right/repo","url":"git@github.com:right/repo.git"}}]} {}`
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err == nil {
+		t.Fatal("Load() accepted a trailing JSON value")
+	}
+}
+
 func TestLoadRejectsUnknownExtension(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "gitmirror.yaml")
 	if err := os.WriteFile(path, []byte("pairs: []\n"), 0o600); err != nil {
