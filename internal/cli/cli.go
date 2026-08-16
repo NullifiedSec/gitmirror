@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -61,6 +60,22 @@ func (a *App) Run(args []string) (handled bool, exitCode int) {
 		return true, 1
 	}
 	return true, 0
+}
+
+// ServeConfigPath resolves global options for daemon mode and rejects stray
+// positional arguments after the optional serve command.
+func ServeConfigPath(args []string) (string, error) {
+	path, rest, err := parseGlobal(args)
+	if err != nil {
+		return "", err
+	}
+	if len(rest) == 0 {
+		return path, nil
+	}
+	if rest[0] != "serve" || len(rest) != 1 {
+		return "", fmt.Errorf("usage: gitmirror [--config PATH] serve")
+	}
+	return path, nil
 }
 
 func parseGlobal(args []string) (string, []string, error) {
@@ -146,11 +161,11 @@ func (a *App) addPairInteractive(path string) error {
 	if err != nil {
 		return err
 	}
-	left, err := promptRepo(r, a.Out, "left")
+	left, err := promptRepo(r, a.Out, "Left")
 	if err != nil {
 		return err
 	}
-	right, err := promptRepo(r, a.Out, "right")
+	right, err := promptRepo(r, a.Out, "Right")
 	if err != nil {
 		return err
 	}
@@ -158,7 +173,7 @@ func (a *App) addPairInteractive(path string) error {
 	if err := cfg.Validate(); err != nil {
 		return fmt.Errorf("new pair is invalid: %w", err)
 	}
-	fmt.Fprintln(a.Out, "")
+	fmt.Fprintln(a.Out)
 	fmt.Fprintf(a.Out, "Will add %s: %s/%s <-> %s/%s\n", name, normalizedProvider(left.Provider), left.FullName, normalizedProvider(right.Provider), right.FullName)
 	ok, err := promptYesNo(r, a.Out, "Write configuration?", false)
 	if err != nil {
@@ -175,11 +190,12 @@ func (a *App) addPairInteractive(path string) error {
 }
 
 func promptRepo(r *bufio.Reader, out io.Writer, side string) (config.Repo, error) {
-	fmt.Fprintf(out, "\n%s repository\n", strings.Title(side))
+	fmt.Fprintf(out, "\n%s repository\n", side)
 	provider, err := promptDefault(r, out, "Provider", config.ProviderGitHub)
 	if err != nil {
 		return config.Repo{}, err
 	}
+	provider = strings.ToLower(strings.TrimSpace(provider))
 	fullName, err := promptRequired(r, out, "Full name (owner/repo)")
 	if err != nil {
 		return config.Repo{}, err
@@ -217,7 +233,7 @@ func promptRepo(r *bufio.Reader, out io.Writer, side string) (config.Repo, error
 			branches = append(branches, branch)
 		}
 	}
-	return config.Repo{Provider: strings.ToLower(strings.TrimSpace(provider)), FullName: fullName, URL: url, Polling: polling, PollingFrequency: frequency, HumanInLoopBranches: branches}, nil
+	return config.Repo{Provider: provider, FullName: fullName, URL: url, Polling: polling, PollingFrequency: frequency, HumanInLoopBranches: branches}, nil
 }
 
 func (a *App) runApprovals(configPath string, args []string) error {
@@ -374,6 +390,3 @@ func short(v string) string {
 	}
 	return v
 }
-
-// Keep flag imported for compatibility with future command-local FlagSets.
-var _ = flag.ContinueOnError
