@@ -2,6 +2,7 @@ package syncer
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -228,8 +229,8 @@ func run(ctx context.Context, dir string, secrets []string, name string, args ..
 }
 
 func safePairName(s string) string {
-	r := strings.NewReplacer("/", "_", "\\", "_", "..", "_")
-	return r.Replace(s)
+	sum := sha256.Sum256([]byte(s))
+	return fmt.Sprintf("%x", sum[:12])
 }
 
 func isZeroSHA(s string) bool { return strings.Trim(s, "0") == "" }
