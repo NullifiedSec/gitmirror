@@ -22,13 +22,13 @@ build:
   mkdir -p bin
   go build -trimpath -ldflags='-s -w' -o bin/gitmirror ./cmd/gitmirror
 
-# Back up every repository tracked by gitmirror into timestamped Git bundle files.
-backup config="gitmirror.toml" output="backups":
-  bash scripts/justbackup.sh --config "{{config}}" --output "{{output}}"
+# Back up every tracked repository into timestamped zstd-compressed Git bundles.
+backup config="gitmirror.toml" output="backups" level="3":
+  bash scripts/justbackup.sh --config "{{config}}" --output "{{output}}" --zstd-level "{{level}}"
 
 # Back up the installed systemd configuration as the gitmirror service user.
-backup-installed output="/var/lib/gitmirror/backups":
-  sudo -u gitmirror env HOME=/var/lib/gitmirror bash scripts/justbackup.sh --config /etc/gitmirror/gitmirror.toml --output "{{output}}"
+backup-installed output="/var/lib/gitmirror/backups" level="3":
+  sudo -u gitmirror env HOME=/var/lib/gitmirror bash scripts/justbackup.sh --config /etc/gitmirror/gitmirror.toml --output "{{output}}" --zstd-level "{{level}}"
 
 # Install/update the hardened systemd deployment and start it when configured.
 install:
