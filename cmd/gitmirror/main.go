@@ -18,7 +18,7 @@ import (
 )
 
 func main() {
-	configPath := flag.String("config", "gitmirror.json", "path to configuration file")
+	configPath := flag.String("config", "gitmirror.toml", "path to TOML or JSON configuration file")
 	flag.Parse()
 
 	cfg, err := config.Load(*configPath)
