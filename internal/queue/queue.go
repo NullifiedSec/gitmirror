@@ -107,6 +107,13 @@ func (q *Queue) Claim() (Event, bool, error) {
 	if err := json.Unmarshal(b, &e); err != nil {
 		return Event{}, false, err
 	}
+	canonical := filepath.Join(q.dir("processing"), eventFileName(e))
+	if canonical != to {
+		if err := os.Rename(to, canonical); err != nil {
+			return Event{}, false, err
+		}
+		to = canonical
+	}
 	e.Attempts++
 	if err := q.write(to, e); err != nil {
 		return Event{}, false, err
