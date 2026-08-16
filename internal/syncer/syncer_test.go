@@ -121,16 +121,27 @@ func gitOut(t *testing.T, dir string, args ...string) string {
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
-	if err != nil { t.Fatalf("git %v: %v\n%s", args, err, out) }
+	if err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
 	return strings.TrimSpace(string(out))
 }
-func mustWrite(t *testing.T, path, content string) { t.Helper(); if err := os.WriteFile(path, []byte(content), 0o600); err != nil { t.Fatal(err) } }
+func mustWrite(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
 func remoteRef(t *testing.T, repo, ref string) string {
 	t.Helper()
 	cmd := exec.Command("git", "ls-remote", repo, ref)
 	out, err := cmd.Output()
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	fields := strings.Fields(string(out))
-	if len(fields) == 0 { return "" }
+	if len(fields) == 0 {
+		return ""
+	}
 	return fields[0]
 }
