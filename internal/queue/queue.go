@@ -15,6 +15,7 @@ import (
 const maxAttempts = 5
 
 type Event struct {
+	Provider   string          `json:"provider,omitempty"`
 	Delivery   string          `json:"delivery"`
 	Type       string          `json:"type"`
 	ReceivedAt time.Time       `json:"received_at"`
@@ -60,7 +61,7 @@ func (q *Queue) Enqueue(e Event) (bool, error) {
 	if e.Delivery == "" {
 		return false, fmt.Errorf("delivery id is required")
 	}
-	name := safeName(e.Delivery) + ".json"
+	name := safeDeliveryName(e.Delivery) + ".json"
 	for _, state := range []string{"pending", "processing", "done"} {
 		if _, err := os.Stat(filepath.Join(q.dir(state), name)); err == nil {
 			return false, nil
@@ -68,33 +69,11 @@ func (q *Queue) Enqueue(e Event) (bool, error) {
 			return false, err
 		}
 	}
-	_ = os.Remove(filepath.Join(q.dir("failed"), name))
-	b, err := json.Marshal(e)
-	if err != nil {
+	failedPath := filepath.Join(q.dir("failed"), name)
+	if err := os.Remove(failedPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return false, err
 	}
-	path := filepath.Join(q.dir("pending"), name)
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if errors.Is(err, os.ErrExist) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	if _, err := f.Write(b); err != nil {
-		_ = f.Close()
-		_ = os.Remove(path)
-		return false, err
-	}
-	if err := f.Sync(); err != nil {
-		_ = f.Close()
-		_ = os.Remove(path)
-		return false, err
-	}
-	if err := f.Close(); err != nil {
-		return false, err
-	}
-	return true, nil
+	return true, q.write(filepath.Join(q.dir("pending"), name), e)
 }
 
 func (q *Queue) Claim() (Event, bool, error) {
@@ -138,14 +117,14 @@ func (q *Queue) Claim() (Event, bool, error) {
 func (q *Queue) Complete(delivery string) error {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	name := safeName(delivery) + ".json"
+	name := safeDeliveryName(delivery) + ".json"
 	return os.Rename(filepath.Join(q.dir("processing"), name), filepath.Join(q.dir("done"), name))
 }
 
 func (q *Queue) Fail(e Event) error {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	name := safeName(e.Delivery) + ".json"
+	name := safeDeliveryName(e.Delivery) + ".json"
 	from := filepath.Join(q.dir("processing"), name)
 	state := "pending"
 	if e.Attempts >= maxAttempts {
@@ -161,20 +140,24 @@ func (q *Queue) write(path string, e Event) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, b, 0o600)
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, append(b, '\n'), 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
-func safeName(s string) string {
+func safeDeliveryName(s string) string {
 	var b strings.Builder
 	for _, r := range s {
-		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_' || r == '.' {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '.' || r == '-' || r == '_' {
 			b.WriteRune(r)
 		} else {
 			b.WriteByte('_')
 		}
 	}
 	if b.Len() == 0 {
-		return "event"
+		return "delivery"
 	}
 	return b.String()
 }
