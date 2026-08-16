@@ -41,6 +41,9 @@ func (s *Store) Create(req Request) (Request, error) {
 		}
 		req.ID = id
 	}
+	if !validID(req.ID) {
+		return Request{}, fmt.Errorf("invalid approval id")
+	}
 	if req.CreatedAt.IsZero() {
 		req.CreatedAt = time.Now().UTC()
 	}
@@ -59,6 +62,9 @@ func (s *Store) Create(req Request) (Request, error) {
 }
 
 func (s *Store) Load(id string) (Request, error) {
+	if !validID(id) {
+		return Request{}, fmt.Errorf("invalid approval id")
+	}
 	b, err := os.ReadFile(filepath.Join(s.root, "pending", id+".json"))
 	if err != nil {
 		return Request{}, err
@@ -71,6 +77,9 @@ func (s *Store) Load(id string) (Request, error) {
 }
 
 func (s *Store) Complete(id string) error {
+	if !validID(id) {
+		return fmt.Errorf("invalid approval id")
+	}
 	if err := os.MkdirAll(filepath.Join(s.root, "done"), 0o700); err != nil {
 		return err
 	}
@@ -91,4 +100,17 @@ func randomID() (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(b[:]), nil
+}
+
+func validID(id string) bool {
+	if id == "" {
+		return false
+	}
+	for _, r := range id {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
+			continue
+		}
+		return false
+	}
+	return true
 }
