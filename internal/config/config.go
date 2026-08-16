@@ -15,6 +15,9 @@ import (
 const (
 	ProviderGitHub = "github"
 	ProviderGitea  = "gitea"
+
+	DefaultPollingFrequency = 120
+	MinPollingFrequency     = 10
 )
 
 type Config struct {
@@ -30,9 +33,11 @@ type Pair struct {
 }
 
 type Repo struct {
-	Provider string `json:"provider,omitempty" toml:"provider,omitempty"`
-	FullName string `json:"full_name" toml:"full_name"`
-	URL      string `json:"url" toml:"url"`
+	Provider         string `json:"provider,omitempty" toml:"provider,omitempty"`
+	FullName         string `json:"full_name" toml:"full_name"`
+	URL              string `json:"url" toml:"url"`
+	Polling          bool   `json:"polling,omitempty" toml:"polling,omitempty"`
+	PollingFrequency int    `json:"polling_frequency,omitempty" toml:"polling_frequency,omitempty"`
 }
 
 func Load(path string) (Config, error) {
@@ -78,12 +83,17 @@ func applyDefaults(c *Config) {
 		c.DataDir = ".gitmirror"
 	}
 	for i := range c.Pairs {
-		if c.Pairs[i].Left.Provider == "" {
-			c.Pairs[i].Left.Provider = ProviderGitHub
-		}
-		if c.Pairs[i].Right.Provider == "" {
-			c.Pairs[i].Right.Provider = ProviderGitHub
-		}
+		applyRepoDefaults(&c.Pairs[i].Left)
+		applyRepoDefaults(&c.Pairs[i].Right)
+	}
+}
+
+func applyRepoDefaults(r *Repo) {
+	if r.Provider == "" {
+		r.Provider = ProviderGitHub
+	}
+	if r.Polling && r.PollingFrequency == 0 {
+		r.PollingFrequency = DefaultPollingFrequency
 	}
 }
 
@@ -111,6 +121,9 @@ func (c Config) Validate() error {
 			}
 			if strings.Count(r.FullName, "/") != 1 || strings.TrimSpace(r.URL) == "" {
 				return fmt.Errorf("pairs[%d].%s requires full_name owner/repo and url", i, side)
+			}
+			if r.Polling && r.PollingFrequency < MinPollingFrequency {
+				return fmt.Errorf("pairs[%d].%s polling_frequency must be at least %d seconds", i, side, MinPollingFrequency)
 			}
 			key := provider + ":" + strings.ToLower(r.FullName)
 			if _, ok := seenRepos[key]; ok {
