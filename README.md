@@ -59,10 +59,12 @@ url = "git@git.example.com:mirror-owner/private-repo.git"
 
 `human_in_loop_branches` is also configured per side. It protects that repository when it is the **destination** of a synchronization operation. For example, putting `human_in_loop_branches = ["main"]` on the left repository means updates flowing from right → left may not change left/main until a human explicitly approves the exact transition.
 
-When a protected update is ready, gitmirror writes a durable approval record under `data_dir/approvals/pending/` and logs its ID. Approve it with:
+When a protected update is ready, gitmirror writes a durable approval record under `data_dir/approvals/pending/` and logs its ID. Inspect and approve it with:
 
 ```bash
-gitmirror -config /etc/gitmirror/gitmirror.toml -approve <approval-id>
+gitmirror approvals list
+gitmirror approvals show <approval-id>
+gitmirror approvals approve <approval-id>
 ```
 
 Approval is bound to the exact source SHA and the exact target SHA observed when the request was created. Before pushing, gitmirror re-reads both remotes. If either side moved, the approval expires and nothing is pushed.
@@ -87,8 +89,6 @@ go run ./cmd/gitmirror -config gitmirror.toml
 
 A provider for which every configured side uses polling does not require a webhook secret.
 
-`gitmirror.toml` is now the default config path, so `-config` can be omitted when using that filename.
-
 `GITMIRROR_WEBHOOK_SECRET` remains supported as a legacy alias for the GitHub webhook secret.
 
 Endpoints:
@@ -98,6 +98,23 @@ Endpoints:
 - `GET /healthz` — liveness endpoint
 
 Configure push webhooks only for sides that should use webhook delivery. Each provider should use its corresponding endpoint and matching secret.
+
+## Operator CLI
+
+The installed binary provides an operator CLI in addition to daemon mode:
+
+```text
+gitmirror status
+gitmirror config validate
+gitmirror pair list
+gitmirror pair add
+gitmirror approvals list
+gitmirror approvals show <id>
+gitmirror approvals approve <id>
+gitmirror approvals reject <id>
+```
+
+Installed commands default to `/etc/gitmirror/gitmirror.toml`. Use `--config PATH` or `-config PATH` to select another configuration. `gitmirror pair add` is interactive and validates the complete resulting config before atomically replacing the TOML file.
 
 ## Quick production install
 
@@ -125,7 +142,7 @@ sudo bash scripts/uninstall.sh --purge
 
 ## just commands
 
-If [`just`](https://github.com/casey/just) is installed, the root `justfile` provides the common workflows:
+If [`just`](https://github.com/casey/just) is installed, the root `justfile` provides developer and deployment convenience workflows:
 
 ```text
 just build
@@ -140,7 +157,7 @@ just uninstall
 just purge
 ```
 
-Running `just` with no recipe lists the available commands.
+Running `just` with no recipe lists the available commands. Operators do not need a source checkout for normal GitMirror control; use the installed CLI for application state and approvals.
 
 ## systemd deployment
 
