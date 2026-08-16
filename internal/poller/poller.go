@@ -51,24 +51,24 @@ func New(cfg config.Config, q Enqueuer) *Runner {
 func (r *Runner) Run(ctx context.Context) {
 	for _, pair := range r.cfg.Pairs {
 		if pair.Left.Polling {
-			go r.runRepo(ctx, pair.Left)
+			go r.runRepo(ctx, pair.Left, pair.Right)
 		}
 		if pair.Right.Polling {
-			go r.runRepo(ctx, pair.Right)
+			go r.runRepo(ctx, pair.Right, pair.Left)
 		}
 	}
 	<-ctx.Done()
 }
 
-func (r *Runner) runRepo(ctx context.Context, repo config.Repo) {
+func (r *Runner) runRepo(ctx context.Context, source, target config.Repo) {
 	poll := func() {
-		if err := r.pollOnce(ctx, repo); err != nil && !errors.Is(err, context.Canceled) {
-			log.Printf("poll %s/%s: %v", normalizeProvider(repo.Provider), repo.FullName, err)
+		if err := r.pollOnce(ctx, source, target); err != nil && !errors.Is(err, context.Canceled) {
+			log.Printf("poll %s/%s: %v", normalizeProvider(source.Provider), source.FullName, err)
 		}
 	}
 
 	poll()
-	frequency := repo.PollingFrequency
+	frequency := source.PollingFrequency
 	if frequency <= 0 {
 		frequency = config.DefaultPollingFrequency
 	}
@@ -84,47 +84,65 @@ func (r *Runner) runRepo(ctx context.Context, repo config.Repo) {
 	}
 }
 
-func (r *Runner) pollOnce(ctx context.Context, repo config.Repo) error {
-	current, err := scanRemote(ctx, repo.URL)
+func (r *Runner) pollOnce(ctx context.Context, source, target config.Repo) error {
+	current, err := scanRemote(ctx, source.URL)
 	if err != nil {
-		return err
+		return fmt.Errorf("scan source %s: %w", source.FullName, err)
 	}
-	previous, err := r.loadSnapshot(repo)
+	targetRefs, err := scanRemote(ctx, target.URL)
+	if err != nil {
+		return fmt.Errorf("scan target %s: %w", target.FullName, err)
+	}
+	previous, err := r.loadSnapshot(source)
 	if err != nil {
 		return err
 	}
 
-	refs := make(map[string]struct{}, len(previous)+len(current))
-	for ref := range previous {
-		refs[ref] = struct{}{}
-	}
+	// Reconcile every live source branch against the counterpart on every poll.
+	// The snapshot is only used to safely recognize source-side deletions; it is
+	// not the authority for deciding whether the destination needs repair.
+	ordered := make([]string, 0, len(current))
 	for ref := range current {
-		refs[ref] = struct{}{}
-	}
-	ordered := make([]string, 0, len(refs))
-	for ref := range refs {
 		ordered = append(ordered, ref)
 	}
 	sort.Strings(ordered)
 
 	for _, ref := range ordered {
-		before, existedBefore := previous[ref]
-		after, existsNow := current[ref]
-		if existedBefore && existsNow && before == after {
+		sourceSHA := current[ref]
+		targetSHA, targetExists := targetRefs[ref]
+		if targetExists && targetSHA == sourceSHA {
 			continue
 		}
-		if !existedBefore {
+		before := targetSHA
+		if !targetExists {
 			before = zeroSHA
 		}
-		if !existsNow {
-			after = zeroSHA
-		}
-		if err := r.enqueue(repo, ref, before, after, !existsNow); err != nil {
+		if err := r.enqueue(source, ref, before, sourceSHA, false); err != nil {
 			return err
 		}
 	}
 
-	return r.saveSnapshot(repo, current)
+	// A deletion is only propagated when this polled source previously had the
+	// branch and the counterpart still points at exactly that previous SHA. This
+	// preserves the existing deletion safety rule and avoids deleting branches
+	// that were independently created on the other side.
+	deletedRefs := make([]string, 0)
+	for ref, previousSHA := range previous {
+		if _, stillExists := current[ref]; stillExists {
+			continue
+		}
+		if targetSHA, targetExists := targetRefs[ref]; targetExists && targetSHA == previousSHA {
+			deletedRefs = append(deletedRefs, ref)
+		}
+	}
+	sort.Strings(deletedRefs)
+	for _, ref := range deletedRefs {
+		if err := r.enqueue(source, ref, previous[ref], zeroSHA, true); err != nil {
+			return err
+		}
+	}
+
+	return r.saveSnapshot(source, current)
 }
 
 func scanRemote(ctx context.Context, url string) (map[string]string, error) {
@@ -164,7 +182,7 @@ func (r *Runner) enqueue(repo config.Repo, ref, before, after string, deleted bo
 		return fmt.Errorf("enqueue polled ref %s: %w", ref, err)
 	}
 	if accepted {
-		log.Printf("poll detected %s/%s %s %s -> %s", e.Provider, repo.FullName, ref, shortSHA(before), shortSHA(after))
+		log.Printf("poll reconcile %s/%s %s %s -> %s", e.Provider, repo.FullName, ref, shortSHA(before), shortSHA(after))
 	}
 	return nil
 }

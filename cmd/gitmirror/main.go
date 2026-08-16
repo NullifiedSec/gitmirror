@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"flag"
 	"log"
 	"net/http"
 	"os"
@@ -11,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/NullifiedSec/gitmirror/internal/cli"
 	"github.com/NullifiedSec/gitmirror/internal/config"
 	"github.com/NullifiedSec/gitmirror/internal/poller"
 	"github.com/NullifiedSec/gitmirror/internal/queue"
@@ -19,10 +19,19 @@ import (
 )
 
 func main() {
-	configPath := flag.String("config", "gitmirror.toml", "path to TOML or JSON configuration file")
-	flag.Parse()
+	app := cli.New()
+	if handled, code := app.Run(os.Args[1:]); handled {
+		os.Exit(code)
+	}
+	configPath, err := cli.ServeConfigPath(os.Args[1:])
+	if err != nil {
+		log.Fatal(err)
+	}
+	serve(configPath)
+}
 
-	cfg, err := config.Load(*configPath)
+func serve(configPath string) {
+	cfg, err := config.Load(configPath)
 	if err != nil {
 		log.Fatalf("load config: %v", err)
 	}

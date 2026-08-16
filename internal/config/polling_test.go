@@ -75,3 +75,32 @@ url = "git@github.com:owner/mirror.git"
 		t.Fatal("Load() accepted polling_frequency below the minimum")
 	}
 }
+
+func TestHumanInLoopBranchesLoad(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "gitmirror.toml")
+	content := `[[pairs]]
+name = "hil"
+
+[pairs.left]
+full_name = "owner/source"
+url = "git@github.com:owner/source.git"
+human_in_loop_branches = ["main", "release"]
+
+[pairs.right]
+full_name = "owner/mirror"
+url = "git@github.com:owner/mirror.git"
+`
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !RequiresHumanApproval(cfg.Pairs[0].Left, "main") || !RequiresHumanApproval(cfg.Pairs[0].Left, "release") {
+		t.Fatalf("HIL branches not loaded: %#v", cfg.Pairs[0].Left.HumanInLoopBranches)
+	}
+	if RequiresHumanApproval(cfg.Pairs[0].Left, "dev") {
+		t.Fatal("unexpected HIL match for dev")
+	}
+}

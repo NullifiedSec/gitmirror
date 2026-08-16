@@ -19,3 +19,8 @@ url = "git@github.com:upstream-owner/private-repo.git"
 provider = "gitea"
 full_name = "mirror-owner/private-repo"
 url = "git@git.example.com:mirror-owner/private-repo.git"
+# Updates to listed branches are never pushed automatically. GitMirror writes a
+# durable approval request and logs its ID. Approval re-validates the exact
+# source and target SHAs before pushing:
+#   gitmirror approvals approve <approval-id>
+# human_in_loop_branches = ["main"]
