@@ -55,7 +55,8 @@ func (s *Syncer) Process(ctx context.Context, e queue.Event) error {
 	if err := checkBranch(ctx, branch); err != nil {
 		return err
 	}
-	pair, source, _, ok := s.findPair(p.Repo.FullName)
+	provider := normalizeProvider(e.Provider)
+	pair, source, _, ok := s.findPair(provider, p.Repo.FullName)
 	if !ok {
 		return nil
 	}
@@ -64,7 +65,7 @@ func (s *Syncer) Process(ctx context.Context, e queue.Event) error {
 		return err
 	}
 	sourceRemote, targetRemote := "left", "right"
-	if strings.EqualFold(source.FullName, pair.Right.FullName) {
+	if sameRepo(source, pair.Right) {
 		sourceRemote, targetRemote = targetRemote, sourceRemote
 	}
 	if p.Deleted {
@@ -73,16 +74,32 @@ func (s *Syncer) Process(ctx context.Context, e queue.Event) error {
 	return s.updateBranch(ctx, repoDir, sourceRemote, targetRemote, p.Ref)
 }
 
-func (s *Syncer) findPair(fullName string) (config.Pair, config.Repo, config.Repo, bool) {
+func (s *Syncer) findPair(provider, fullName string) (config.Pair, config.Repo, config.Repo, bool) {
 	for _, p := range s.cfg.Pairs {
-		if strings.EqualFold(fullName, p.Left.FullName) {
+		if repoMatches(p.Left, provider, fullName) {
 			return p, p.Left, p.Right, true
 		}
-		if strings.EqualFold(fullName, p.Right.FullName) {
+		if repoMatches(p.Right, provider, fullName) {
 			return p, p.Right, p.Left, true
 		}
 	}
 	return config.Pair{}, config.Repo{}, config.Repo{}, false
+}
+
+func repoMatches(repo config.Repo, provider, fullName string) bool {
+	return normalizeProvider(repo.Provider) == normalizeProvider(provider) && strings.EqualFold(repo.FullName, fullName)
+}
+
+func sameRepo(a, b config.Repo) bool {
+	return repoMatches(a, b.Provider, b.FullName)
+}
+
+func normalizeProvider(provider string) string {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	if provider == "" {
+		return config.ProviderGitHub
+	}
+	return provider
 }
 
 func (s *Syncer) ensureBare(ctx context.Context, repoDir string, pair config.Pair) error {
