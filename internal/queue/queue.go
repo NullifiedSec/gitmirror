@@ -61,7 +61,7 @@ func (q *Queue) Enqueue(e Event) (bool, error) {
 	if e.Delivery == "" {
 		return false, fmt.Errorf("delivery id is required")
 	}
-	name := safeDeliveryName(e.Delivery) + ".json"
+	name := eventFileName(e)
 	for _, state := range []string{"pending", "processing", "done"} {
 		if _, err := os.Stat(filepath.Join(q.dir(state), name)); err == nil {
 			return false, nil
@@ -114,17 +114,17 @@ func (q *Queue) Claim() (Event, bool, error) {
 	return e, true, nil
 }
 
-func (q *Queue) Complete(delivery string) error {
+func (q *Queue) Complete(e Event) error {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	name := safeDeliveryName(delivery) + ".json"
+	name := eventFileName(e)
 	return os.Rename(filepath.Join(q.dir("processing"), name), filepath.Join(q.dir("done"), name))
 }
 
 func (q *Queue) Fail(e Event) error {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	name := safeDeliveryName(e.Delivery) + ".json"
+	name := eventFileName(e)
 	from := filepath.Join(q.dir("processing"), name)
 	state := "pending"
 	if e.Attempts >= maxAttempts {
@@ -145,6 +145,14 @@ func (q *Queue) write(path string, e Event) error {
 		return err
 	}
 	return os.Rename(tmp, path)
+}
+
+func eventFileName(e Event) string {
+	provider := strings.ToLower(strings.TrimSpace(e.Provider))
+	if provider == "" {
+		provider = "github"
+	}
+	return safeDeliveryName(provider) + "__" + safeDeliveryName(e.Delivery) + ".json"
 }
 
 func safeDeliveryName(s string) string {
