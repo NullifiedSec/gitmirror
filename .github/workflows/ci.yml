@@ -29,9 +29,10 @@ jobs:
         run: go test ./...
       - name: Validate deployment scripts
         run: |
-          bash -n scripts/install.sh scripts/uninstall.sh
+          bash -n scripts/install.sh scripts/uninstall.sh scripts/justbackup.sh
           bash scripts/install.sh --help >/dev/null
           bash scripts/uninstall.sh --help >/dev/null
+          bash scripts/justbackup.sh --help >/dev/null
       - name: Verify systemd unit
         run: |
           go build -trimpath -o /tmp/gitmirror-ci ./cmd/gitmirror
