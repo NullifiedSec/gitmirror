@@ -17,6 +17,7 @@ import (
 type Syncer struct {
 	cfg     config.Config
 	dataDir string
+	secrets []string
 }
 
 type pushPayload struct {
@@ -30,7 +31,11 @@ type pushPayload struct {
 }
 
 func New(cfg config.Config) *Syncer {
-	return &Syncer{cfg: cfg, dataDir: cfg.DataDir}
+	var secrets []string
+	for _, p := range cfg.Pairs {
+		secrets = append(secrets, p.Left.URL, p.Right.URL)
+	}
+	return &Syncer{cfg: cfg, dataDir: cfg.DataDir, secrets: secrets}
 }
 
 func (s *Syncer) Process(ctx context.Context, e queue.Event) error {
@@ -49,7 +54,7 @@ func (s *Syncer) Process(ctx context.Context, e queue.Event) error {
 	if err := checkBranch(ctx, branch); err != nil {
 		return err
 	}
-	pair, source, target, ok := s.findPair(p.Repo.FullName)
+	pair, source, _, ok := s.findPair(p.Repo.FullName)
 	if !ok {
 		return nil
 	}
@@ -84,18 +89,18 @@ func (s *Syncer) ensureBare(ctx context.Context, repoDir string, pair config.Pai
 		return err
 	}
 	if _, err := os.Stat(filepath.Join(repoDir, "HEAD")); errors.Is(err, os.ErrNotExist) {
-		if _, err := run(ctx, "", nil, "git", "init", "--bare", repoDir); err != nil {
+		if _, err := run(ctx, "", s.secrets, "git", "init", "--bare", repoDir); err != nil {
 			return fmt.Errorf("initialize local mirror: %w", err)
 		}
 	} else if err != nil {
 		return err
 	}
 	for name, url := range map[string]string{"left": pair.Left.URL, "right": pair.Right.URL} {
-		if _, err := run(ctx, repoDir, pairURLs(pair), "git", "remote", "get-url", name); err != nil {
-			if _, addErr := run(ctx, repoDir, pairURLs(pair), "git", "remote", "add", name, url); addErr != nil {
+		if _, err := run(ctx, repoDir, s.secrets, "git", "remote", "get-url", name); err != nil {
+			if _, addErr := run(ctx, repoDir, s.secrets, "git", "remote", "add", name, url); addErr != nil {
 				return fmt.Errorf("configure %s remote: %w", name, addErr)
 			}
-		} else if _, err := run(ctx, repoDir, pairURLs(pair), "git", "remote", "set-url", name, url); err != nil {
+		} else if _, err := run(ctx, repoDir, s.secrets, "git", "remote", "set-url", name, url); err != nil {
 			return fmt.Errorf("update %s remote: %w", name, err)
 		}
 	}
@@ -103,23 +108,22 @@ func (s *Syncer) ensureBare(ctx context.Context, repoDir string, pair config.Pai
 }
 
 func (s *Syncer) updateBranch(ctx context.Context, repoDir, source, target, ref string) error {
-	sourceSHA, exists, err := remoteSHA(ctx, repoDir, source, ref)
+	sourceSHA, exists, err := s.remoteSHA(ctx, repoDir, source, ref)
 	if err != nil {
 		return err
 	}
 	if !exists {
-		return nil // stale push event; a later deletion event will handle removal safely.
+		return nil
 	}
-	if _, err := run(ctx, repoDir, nil, "git", "fetch", "--no-tags", source, "+"+ref+":refs/gitmirror/source"); err != nil {
+	if _, err := run(ctx, repoDir, s.secrets, "git", "fetch", "--no-tags", source, "+"+ref+":refs/gitmirror/source); err != nil {
 		return fmt.Errorf("fetch source branch: %w", err)
 	}
-	targetSHA, targetExists, err := remoteSHA(ctx, repoDir, target, ref)
+	targetSHA, targetExists, err := s.remoteSHA(ctx, repoDir, target, ref)
 	if err != nil {
 		return err
 	}
 	if !targetExists {
-		_, err := run(ctx, repoDir, nil, "git", "push", target, "refs/gitmirror/source:"+ref)
-		if err != nil {
+		if _, err := run(ctx, repoDir, s.secrets, "git", "push", target, "refs/gitmirror/source:"+ref); err != nil {
 			return fmt.Errorf("create target branch: %w", err)
 		}
 		return nil
@@ -127,7 +131,7 @@ func (s *Syncer) updateBranch(ctx context.Context, repoDir, source, target, ref 
 	if targetSHA == sourceSHA {
 		return nil
 	}
-	if _, err := run(ctx, repoDir, nil, "git", "fetch", "--no-tags", target, "+"+ref+":refs/gitmirror/target"); err != nil {
+	if _, err := run(ctx, repoDir, s.secrets, "git", "fetch", "--no-tags", target, "+"+ref+":refs/gitmirror/target); err != nil {
 		return fmt.Errorf("fetch target branch: %w", err)
 	}
 	targetBehind, err := isAncestor(ctx, repoDir, targetSHA, sourceSHA)
@@ -135,7 +139,7 @@ func (s *Syncer) updateBranch(ctx context.Context, repoDir, source, target, ref 
 		return err
 	}
 	if targetBehind {
-		if _, err := run(ctx, repoDir, nil, "git", "push", target, "refs/gitmirror/source:"+ref); err != nil {
+		if _, err := run(ctx, repoDir, s.secrets, "git", "push", target, "refs/gitmirror/source:"+ref); err != nil {
 			return fmt.Errorf("fast-forward target branch: %w", err)
 		}
 		return nil
@@ -145,32 +149,32 @@ func (s *Syncer) updateBranch(ctx context.Context, repoDir, source, target, ref 
 		return err
 	}
 	if sourceBehind {
-		return nil // event arrived late; target already contains this source state.
+		return nil
 	}
 	return fmt.Errorf("branch %s diverged between %s and %s; refusing destructive update", ref, source, target)
 }
 
 func (s *Syncer) deleteBranch(ctx context.Context, repoDir, source, target, ref, before string) error {
-	if _, exists, err := remoteSHA(ctx, repoDir, source, ref); err != nil {
+	if _, exists, err := s.remoteSHA(ctx, repoDir, source, ref); err != nil {
 		return err
 	} else if exists {
-		return nil // stale deletion event: source branch has since been recreated.
+		return nil
 	}
-	targetSHA, exists, err := remoteSHA(ctx, repoDir, target, ref)
+	targetSHA, exists, err := s.remoteSHA(ctx, repoDir, target, ref)
 	if err != nil || !exists {
 		return err
 	}
 	if before == "" || isZeroSHA(before) || targetSHA != before {
 		return fmt.Errorf("refusing to delete %s: target moved from expected source SHA", ref)
 	}
-	if _, err := run(ctx, repoDir, nil, "git", "push", target, ":"+ref); err != nil {
+	if _, err := run(ctx, repoDir, s.secrets, "git", "push", target, ":"+ref); err != nil {
 		return fmt.Errorf("delete target branch: %w", err)
 	}
 	return nil
 }
 
-func remoteSHA(ctx context.Context, repoDir, remote, ref string) (string, bool, error) {
-	out, err := run(ctx, repoDir, nil, "git", "ls-remote", "--exit-code", remote, ref)
+func (s *Syncer) remoteSHA(ctx context.Context, repoDir, remote, ref string) (string, bool, error) {
+	out, err := run(ctx, repoDir, s.secrets, "git", "ls-remote", "--exit-code", remote, ref)
 	if err != nil {
 		var ee *exec.ExitError
 		if errors.As(err, &ee) && ee.ExitCode() == 2 {
@@ -222,8 +226,6 @@ func run(ctx context.Context, dir string, secrets []string, name string, args ..
 	}
 	return text, nil
 }
-
-func pairURLs(p config.Pair) []string { return []string{p.Left.URL, p.Right.URL} }
 
 func safePairName(s string) string {
 	r := strings.NewReplacer("/", "_", "\\", "_", "..", "_")
