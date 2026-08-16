@@ -14,7 +14,7 @@ START_SERVICE=1
 
 usage() {
   cat <<'EOF'
-Usage: sudo ./scripts/install.sh [--no-start]
+Usage: sudo bash scripts/install.sh [--no-start]
 
 Builds gitmirror and installs the hardened systemd deployment.
 Existing config, environment, state, and SSH credentials are preserved.
@@ -30,11 +30,11 @@ for arg in "$@"; do
 done
 
 if [[ ${EUID} -ne 0 ]]; then
-  echo "install.sh must run as root (try: sudo ./scripts/install.sh)" >&2
+  echo "install.sh must run as root (try: sudo bash scripts/install.sh)" >&2
   exit 1
 fi
 
-for cmd in go git install systemctl useradd getent sed; do
+for cmd in go git install systemctl useradd groupadd getent sed mktemp grep; do
   command -v "$cmd" >/dev/null 2>&1 || { echo "required command not found: $cmd" >&2; exit 1; }
 done
 
@@ -80,17 +80,15 @@ fi
 
 install -o root -g root -m 0644 "$ROOT_DIR/deploy/systemd/gitmirror.service" "$UNIT_PATH"
 systemctl daemon-reload
+systemctl enable gitmirror.service >/dev/null
 
-if [[ $START_SERVICE -eq 1 ]]; then
-  systemctl enable gitmirror.service >/dev/null
-  if grep -Eq '^GITMIRROR_(GITHUB|GITEA|WEBHOOK)_WEBHOOK_SECRET=.+$' "$ENV_PATH"; then
-    systemctl restart gitmirror.service
-    echo "gitmirror installed and started"
-  else
-    echo "gitmirror installed but not started: configure webhook secrets in $ENV_PATH first"
-  fi
-else
+if [[ $START_SERVICE -eq 0 ]]; then
   echo "gitmirror installed; service start skipped (--no-start)"
+elif grep -Eq '^GITMIRROR_(GITHUB_WEBHOOK_SECRET|GITEA_WEBHOOK_SECRET|WEBHOOK_SECRET)=[^[:space:]]+$' "$ENV_PATH"; then
+  systemctl restart gitmirror.service
+  echo "gitmirror installed and started"
+else
+  echo "gitmirror installed but not started: configure webhook secrets in $ENV_PATH first"
 fi
 
 echo "config: $CONFIG_PATH"
