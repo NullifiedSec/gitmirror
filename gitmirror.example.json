@@ -3,14 +3,16 @@
   "data_dir": ".gitmirror",
   "pairs": [
     {
-      "name": "example",
+      "name": "github-gitea-example",
       "left": {
+        "provider": "github",
         "full_name": "upstream-owner/private-repo",
         "url": "git@github.com:upstream-owner/private-repo.git"
       },
       "right": {
-        "full_name": "your-org/private-repo",
-        "url": "git@github.com:your-org/private-repo.git"
+        "provider": "gitea",
+        "full_name": "mirror-owner/private-repo",
+        "url": "git@git.example.com:mirror-owner/private-repo.git"
       }
     }
   ]

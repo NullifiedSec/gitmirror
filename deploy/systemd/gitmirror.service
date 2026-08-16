@@ -1,0 +1,57 @@
+[Unit]
+Description=gitmirror bidirectional repository synchronization daemon
+Documentation=https://github.com/NullifiedSec/gitmirror
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=gitmirror
+Group=gitmirror
+
+ExecStartPre=/usr/bin/test -r /etc/gitmirror/gitmirror.toml
+ExecStart=/usr/local/bin/gitmirror -config /etc/gitmirror/gitmirror.toml
+
+WorkingDirectory=/var/lib/gitmirror
+Environment=HOME=/var/lib/gitmirror
+Environment=GIT_CONFIG_NOSYSTEM=1
+EnvironmentFile=-/etc/gitmirror/gitmirror.env
+
+StateDirectory=gitmirror
+StateDirectoryMode=0700
+ConfigurationDirectory=gitmirror
+ConfigurationDirectoryMode=0750
+
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=20s
+
+UMask=0077
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectProc=invisible
+ProcSubset=pid
+
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target
