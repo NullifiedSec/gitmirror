@@ -80,6 +80,49 @@ Endpoints:
 
 Configure push webhooks on both sides of a pair. Each provider should use its corresponding endpoint and matching secret.
 
+## Quick production install
+
+The repository includes conservative install/uninstall scripts for the hardened systemd deployment:
+
+```bash
+sudo bash scripts/install.sh
+```
+
+The installer builds the current checkout, creates the dedicated service account and directories if needed, installs the binary/unit, and preserves any existing config, secrets, state, and SSH credentials. A fresh install does not start the service until webhook secrets have been configured in `/etc/gitmirror/gitmirror.env`.
+
+Uninstall the executable/unit while preserving persistent data:
+
+```bash
+sudo bash scripts/uninstall.sh
+```
+
+Explicitly purge configuration, mirror state, SSH credentials, and the service account:
+
+```bash
+sudo bash scripts/uninstall.sh --purge
+```
+
+`--purge` is destructive by design and is never the default.
+
+## just commands
+
+If [`just`](https://github.com/casey/just) is installed, the root `justfile` provides the common workflows:
+
+```text
+just build
+just verify
+just install
+just install-no-start
+just status
+just logs
+just restart
+just security
+just uninstall
+just purge
+```
+
+Running `just` with no recipe lists the available commands.
+
 ## systemd deployment
 
 A hardened production unit is provided at `deploy/systemd/gitmirror.service` together with a secrets-file example and installation guide.
@@ -93,7 +136,7 @@ The recommended layout is:
 
 The supplied unit runs as a dedicated unprivileged `gitmirror` user and enables systemd sandboxing including `NoNewPrivileges`, `ProtectSystem=strict`, private temporary/device namespaces, kernel and control-group protections, an empty capability set, and a restrictive umask.
 
-See `deploy/systemd/README.md` for copy-ready installation commands and SSH credential guidance.
+See `deploy/systemd/README.md` for the deployment layout and SSH credential guidance.
 
 ## Conflict behavior
 
@@ -117,5 +160,6 @@ Failed deliveries are retried up to five times and then moved to the queue's `fa
 - deletion requires an exact expected SHA match
 - remote URLs are treated as sensitive in captured Git output
 - the production systemd unit is designed to run without Linux capabilities and with a read-only system view
+- uninstall preserves persistent config/state unless `--purge` is explicitly requested
 
 Do not place webhook secrets or repository credentials in this repository.
