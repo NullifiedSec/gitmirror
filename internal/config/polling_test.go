@@ -44,8 +44,8 @@ polling_frequency = 30
 
 func TestWebhookRequiredWhenAnySideIsNotPolling(t *testing.T) {
 	cfg := Config{Pairs: []Pair{{
-		Name: "mixed",
-		Left: Repo{Provider: ProviderGitHub, FullName: "owner/source", URL: "git@github.com:owner/source.git", Polling: true, PollingFrequency: 120},
+		Name:  "mixed",
+		Left:  Repo{Provider: ProviderGitHub, FullName: "owner/source", URL: "git@github.com:owner/source.git", Polling: true, PollingFrequency: 120},
 		Right: Repo{Provider: ProviderGitHub, FullName: "owner/mirror", URL: "git@github.com:owner/mirror.git"},
 	}}}
 	if !cfg.RequiresWebhook(ProviderGitHub) {
