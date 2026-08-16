@@ -4,7 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
+
+	"github.com/pelletier/go-toml/v2"
 )
 
 const (
@@ -13,21 +16,21 @@ const (
 )
 
 type Config struct {
-	Listen  string `json:"listen"`
-	DataDir string `json:"data_dir"`
-	Pairs   []Pair `json:"pairs"`
+	Listen  string `json:"listen" toml:"listen"`
+	DataDir string `json:"data_dir" toml:"data_dir"`
+	Pairs   []Pair `json:"pairs" toml:"pairs"`
 }
 
 type Pair struct {
-	Name  string `json:"name"`
-	Left  Repo   `json:"left"`
-	Right Repo   `json:"right"`
+	Name  string `json:"name" toml:"name"`
+	Left  Repo   `json:"left" toml:"left"`
+	Right Repo   `json:"right" toml:"right"`
 }
 
 type Repo struct {
-	Provider string `json:"provider,omitempty"`
-	FullName string `json:"full_name"`
-	URL      string `json:"url"`
+	Provider string `json:"provider,omitempty" toml:"provider,omitempty"`
+	FullName string `json:"full_name" toml:"full_name"`
+	URL      string `json:"url" toml:"url"`
 }
 
 func Load(path string) (Config, error) {
@@ -36,9 +39,26 @@ func Load(path string) (Config, error) {
 		return Config{}, err
 	}
 	var c Config
-	if err := json.Unmarshal(b, &c); err != nil {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".toml":
+		if err := toml.Unmarshal(b, &c); err != nil {
+			return Config{}, fmt.Errorf("decode TOML config: %w", err)
+		}
+	case ".json", "":
+		if err := json.Unmarshal(b, &c); err != nil {
+			return Config{}, fmt.Errorf("decode JSON config: %w", err)
+		}
+	default:
+		return Config{}, fmt.Errorf("unsupported config format %q; use .toml or .json", filepath.Ext(path))
+	}
+	applyDefaults(&c)
+	if err := c.Validate(); err != nil {
 		return Config{}, err
 	}
+	return c, nil
+}
+
+func applyDefaults(c *Config) {
 	if c.Listen == "" {
 		c.Listen = ":8080"
 	}
@@ -53,10 +73,6 @@ func Load(path string) (Config, error) {
 			c.Pairs[i].Right.Provider = ProviderGitHub
 		}
 	}
-	if err := c.Validate(); err != nil {
-		return Config{}, err
-	}
-	return c, nil
 }
 
 func (c Config) Validate() error {
