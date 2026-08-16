@@ -24,7 +24,7 @@ intentionally modest to avoid wasting CPU for tiny additional gains.
 Environment overrides:
   GITMIRROR_CONFIG             config path (default: ./gitmirror.toml)
   GITMIRROR_BACKUP_DIR        backup root (default: ./backups)
-  GITMIRROR_BACKUP_ZSTD_LEVEL zstd level (default: 3)
+  GITMIRROR_BACKUP_ZSTD_LEVEL zstd level 1-19 (default: 3)
 EOF
 }
 
@@ -58,7 +58,10 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-[[ "$ZSTD_LEVEL" =~ ^-?[0-9]+$ ]] || { echo "invalid zstd level: $ZSTD_LEVEL" >&2; exit 2; }
+if [[ ! "$ZSTD_LEVEL" =~ ^[0-9]+$ ]] || (( ZSTD_LEVEL < 1 || ZSTD_LEVEL > 19 )); then
+  echo "invalid zstd level: $ZSTD_LEVEL (expected 1-19)" >&2
+  exit 2
+fi
 
 for cmd in git python3 date mktemp zstd; do
   command -v "$cmd" >/dev/null 2>&1 || { echo "required command not found: $cmd" >&2; exit 1; }
