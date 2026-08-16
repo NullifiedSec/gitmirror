@@ -11,6 +11,9 @@ name = "github-gitea-example"
 provider = "github"
 full_name = "upstream-owner/private-repo"
 url = "git@github.com:upstream-owner/private-repo.git"
+# Polling is optional and configured independently on each side.
+# polling = true
+# polling_frequency = 120
 
 [pairs.right]
 provider = "gitea"
