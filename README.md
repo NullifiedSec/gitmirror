@@ -80,6 +80,21 @@ Endpoints:
 
 Configure push webhooks on both sides of a pair. Each provider should use its corresponding endpoint and matching secret.
 
+## systemd deployment
+
+A hardened production unit is provided at `deploy/systemd/gitmirror.service` together with a secrets-file example and installation guide.
+
+The recommended layout is:
+
+- `/usr/local/bin/gitmirror` — root-owned executable
+- `/etc/gitmirror/gitmirror.toml` — root-owned configuration
+- `/etc/gitmirror/gitmirror.env` — root-owned webhook secrets
+- `/var/lib/gitmirror` — persistent queue, bare repositories, and service-account SSH state
+
+The supplied unit runs as a dedicated unprivileged `gitmirror` user and enables systemd sandboxing including `NoNewPrivileges`, `ProtectSystem=strict`, private temporary/device namespaces, kernel and control-group protections, an empty capability set, and a restrictive umask.
+
+See `deploy/systemd/README.md` for copy-ready installation commands and SSH credential guidance.
+
 ## Conflict behavior
 
 For a branch update, gitmirror fetches both tips and checks commit ancestry:
@@ -101,5 +116,6 @@ Failed deliveries are retried up to five times and then moved to the queue's `fa
 - force pushes are not used
 - deletion requires an exact expected SHA match
 - remote URLs are treated as sensitive in captured Git output
+- the production systemd unit is designed to run without Linux capabilities and with a read-only system view
 
 Do not place webhook secrets or repository credentials in this repository.
