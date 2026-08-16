@@ -1,8 +1,10 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -41,11 +43,21 @@ func Load(path string) (Config, error) {
 	var c Config
 	switch strings.ToLower(filepath.Ext(path)) {
 	case ".toml":
-		if err := toml.Unmarshal(b, &c); err != nil {
+		decoder := toml.NewDecoder(bytes.NewReader(b)).DisallowUnknownFields()
+		if err := decoder.Decode(&c); err != nil {
 			return Config{}, fmt.Errorf("decode TOML config: %w", err)
 		}
 	case ".json", "":
-		if err := json.Unmarshal(b, &c); err != nil {
+		decoder := json.NewDecoder(bytes.NewReader(b))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&c); err != nil {
+			return Config{}, fmt.Errorf("decode JSON config: %w", err)
+		}
+		var extra any
+		if err := decoder.Decode(&extra); err != io.EOF {
+			if err == nil {
+				return Config{}, fmt.Errorf("decode JSON config: trailing JSON value")
+			}
 			return Config{}, fmt.Errorf("decode JSON config: %w", err)
 		}
 	default:
