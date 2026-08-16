@@ -7,6 +7,8 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+
+	"github.com/NullifiedSec/gitmirror/internal/config"
 )
 
 // Bootstrap ensures every configured pair has a local bare repository cache.
