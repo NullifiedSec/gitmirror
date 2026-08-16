@@ -8,18 +8,27 @@ default:
 fmt:
   gofmt -w .
 
-# Run formatting, vet, and tests.
+# Run formatting, vet, tests, and deployment/script validation.
 verify:
   test -z "$(gofmt -l .)"
   go vet ./...
   go test ./...
-  bash -n scripts/install.sh scripts/uninstall.sh
+  bash -n scripts/install.sh scripts/uninstall.sh scripts/justbackup.sh
+  scripts/justbackup.sh --help >/dev/null
   systemd-analyze verify deploy/systemd/gitmirror.service
 
 # Build the production binary into ./bin/gitmirror.
 build:
   mkdir -p bin
   go build -trimpath -ldflags='-s -w' -o bin/gitmirror ./cmd/gitmirror
+
+# Back up every repository tracked by gitmirror into timestamped Git bundle files.
+backup config="gitmirror.toml" output="backups":
+  bash scripts/justbackup.sh --config "{{config}}" --output "{{output}}"
+
+# Back up the installed systemd configuration as the gitmirror service user.
+backup-installed output="/var/lib/gitmirror/backups":
+  sudo -u gitmirror env HOME=/var/lib/gitmirror bash scripts/justbackup.sh --config /etc/gitmirror/gitmirror.toml --output "{{output}}"
 
 # Install/update the hardened systemd deployment and start it when configured.
 install:
