@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/NullifiedSec/gitmirror/internal/config"
+	"github.com/NullifiedSec/gitmirror/internal/poller"
 	"github.com/NullifiedSec/gitmirror/internal/queue"
 	"github.com/NullifiedSec/gitmirror/internal/syncer"
 	"github.com/NullifiedSec/gitmirror/internal/webhook"
@@ -31,11 +32,11 @@ func main() {
 		githubSecret = os.Getenv("GITMIRROR_WEBHOOK_SECRET")
 	}
 	giteaSecret := os.Getenv("GITMIRROR_GITEA_WEBHOOK_SECRET")
-	if cfg.UsesProvider(config.ProviderGitHub) && githubSecret == "" {
-		log.Fatal("GITMIRROR_GITHUB_WEBHOOK_SECRET (or legacy GITMIRROR_WEBHOOK_SECRET) is required")
+	if cfg.RequiresWebhook(config.ProviderGitHub) && githubSecret == "" {
+		log.Fatal("GITMIRROR_GITHUB_WEBHOOK_SECRET (or legacy GITMIRROR_WEBHOOK_SECRET) is required when GitHub sides rely on webhooks")
 	}
-	if cfg.UsesProvider(config.ProviderGitea) && giteaSecret == "" {
-		log.Fatal("GITMIRROR_GITEA_WEBHOOK_SECRET is required")
+	if cfg.RequiresWebhook(config.ProviderGitea) && giteaSecret == "" {
+		log.Fatal("GITMIRROR_GITEA_WEBHOOK_SECRET is required when Gitea sides rely on webhooks")
 	}
 
 	q := queue.New(cfg.DataDir)
@@ -47,6 +48,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	go worker(ctx, q, processor)
+	go poller.New(cfg, q).Run(ctx)
 
 	mux := http.NewServeMux()
 	if githubSecret != "" {
