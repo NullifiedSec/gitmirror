@@ -86,8 +86,8 @@ url = "git@github.com:right/repo.git"
 `,
 		},
 		{
-			name: "json",
-			file: "gitmirror.json",
+			name:    "json",
+			file:    "gitmirror.json",
 			content: `{"data_dri":".gitmirror","pairs":[{"name":"example","left":{"full_name":"left/repo","url":"git@github.com:left/repo.git"},"right":{"full_name":"right/repo","url":"git@github.com:right/repo.git"}}]}`,
 		},
 	}
