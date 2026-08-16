@@ -25,9 +25,9 @@ type Enqueuer interface {
 }
 
 type Runner struct {
-	cfg  config.Config
+	cfg   config.Config
 	queue Enqueuer
-	now  func() time.Time
+	now   func() time.Time
 }
 
 type snapshot struct {
@@ -68,7 +68,11 @@ func (r *Runner) runRepo(ctx context.Context, repo config.Repo) {
 	}
 
 	poll()
-	ticker := time.NewTicker(time.Duration(repo.PollingFrequency) * time.Second)
+	frequency := repo.PollingFrequency
+	if frequency <= 0 {
+		frequency = config.DefaultPollingFrequency
+	}
+	ticker := time.NewTicker(time.Duration(frequency) * time.Second)
 	defer ticker.Stop()
 	for {
 		select {
@@ -126,8 +130,9 @@ func (r *Runner) pollOnce(ctx context.Context, repo config.Repo) error {
 func scanRemote(ctx context.Context, url string) (map[string]string, error) {
 	cmd := exec.CommandContext(ctx, "git", "ls-remote", "--heads", url)
 	out, err := cmd.CombinedOutput()
+	text := strings.ReplaceAll(string(out), url, "[REDACTED_REMOTE]")
 	if err != nil {
-		return nil, fmt.Errorf("scan remote refs: %w: %s", err, strings.TrimSpace(string(out)))
+		return nil, fmt.Errorf("scan remote refs: %w: %s", err, strings.TrimSpace(text))
 	}
 	refs := map[string]string{}
 	for _, line := range strings.Split(string(out), "\n") {
@@ -154,8 +159,12 @@ func (r *Runner) enqueue(repo config.Repo, ref, before, after string, deleted bo
 		ReceivedAt: r.now().UTC(),
 		Body:       body,
 	}
-	if _, err := r.queue.Enqueue(e); err != nil {
+	accepted, err := r.queue.Enqueue(e)
+	if err != nil {
 		return fmt.Errorf("enqueue polled ref %s: %w", ref, err)
+	}
+	if accepted {
+		log.Printf("poll detected %s/%s %s %s -> %s", e.Provider, repo.FullName, ref, shortSHA(before), shortSHA(after))
 	}
 	return nil
 }
@@ -213,4 +222,11 @@ func normalizeProvider(provider string) string {
 		return config.ProviderGitHub
 	}
 	return provider
+}
+
+func shortSHA(sha string) string {
+	if len(sha) <= 12 {
+		return sha
+	}
+	return sha[:12]
 }
