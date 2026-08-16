@@ -33,11 +33,12 @@ type Pair struct {
 }
 
 type Repo struct {
-	Provider         string `json:"provider,omitempty" toml:"provider,omitempty"`
-	FullName         string `json:"full_name" toml:"full_name"`
-	URL              string `json:"url" toml:"url"`
-	Polling          bool   `json:"polling,omitempty" toml:"polling,omitempty"`
-	PollingFrequency int    `json:"polling_frequency,omitempty" toml:"polling_frequency,omitempty"`
+	Provider            string   `json:"provider,omitempty" toml:"provider,omitempty"`
+	FullName            string   `json:"full_name" toml:"full_name"`
+	URL                 string   `json:"url" toml:"url"`
+	Polling             bool     `json:"polling,omitempty" toml:"polling,omitempty"`
+	PollingFrequency    int      `json:"polling_frequency,omitempty" toml:"polling_frequency,omitempty"`
+	HumanInLoopBranches []string `json:"human_in_loop_branches,omitempty" toml:"human_in_loop_branches,omitempty"`
 }
 
 func Load(path string) (Config, error) {
@@ -125,6 +126,11 @@ func (c Config) Validate() error {
 			if r.Polling && r.PollingFrequency < MinPollingFrequency {
 				return fmt.Errorf("pairs[%d].%s polling_frequency must be at least %d seconds", i, side, MinPollingFrequency)
 			}
+			for _, branch := range r.HumanInLoopBranches {
+				if strings.TrimSpace(branch) == "" || strings.HasPrefix(branch, "refs/") {
+					return fmt.Errorf("pairs[%d].%s human_in_loop_branches must contain branch names such as main", i, side)
+				}
+			}
 			key := provider + ":" + strings.ToLower(r.FullName)
 			if _, ok := seenRepos[key]; ok {
 				return fmt.Errorf("repository %q on %s appears in more than one pair", r.FullName, provider)
@@ -152,6 +158,15 @@ func (c Config) RequiresWebhook(provider string) bool {
 			return true
 		}
 		if strings.EqualFold(p.Right.Provider, provider) && !p.Right.Polling {
+			return true
+		}
+	}
+	return false
+}
+
+func RequiresHumanApproval(repo Repo, branch string) bool {
+	for _, protected := range repo.HumanInLoopBranches {
+		if protected == branch {
 			return true
 		}
 	}
