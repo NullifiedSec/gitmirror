@@ -30,29 +30,29 @@ SSH remotes are recommended for the initial deployment because they avoid embedd
 
 ## Configuration
 
-Copy `gitmirror.example.json` to `gitmirror.json` and configure each repository pair:
+TOML is the preferred configuration format. Copy `gitmirror.example.toml` to `gitmirror.toml`:
 
-```json
-{
-  "listen": ":8080",
-  "data_dir": ".gitmirror",
-  "pairs": [
-    {
-      "name": "github-gitea-example",
-      "left": {
-        "provider": "github",
-        "full_name": "upstream-owner/private-repo",
-        "url": "git@github.com:upstream-owner/private-repo.git"
-      },
-      "right": {
-        "provider": "gitea",
-        "full_name": "mirror-owner/private-repo",
-        "url": "git@git.example.com:mirror-owner/private-repo.git"
-      }
-    }
-  ]
-}
+```toml
+listen = ":8080"
+data_dir = ".gitmirror"
+
+[[pairs]]
+name = "github-gitea-example"
+
+[pairs.left]
+provider = "github"
+full_name = "upstream-owner/private-repo"
+url = "git@github.com:upstream-owner/private-repo.git"
+
+[pairs.right]
+provider = "gitea"
+full_name = "mirror-owner/private-repo"
+url = "git@git.example.com:mirror-owner/private-repo.git"
 ```
+
+The nested TOML tables map naturally to the two repositories in a pair, and `[[pairs]]` can be repeated for additional mirror pairs.
+
+JSON configuration remains supported for compatibility with existing installations. `gitmirror.example.json` is kept as a legacy example, and `-config` accepts either `.toml` or `.json` files. Files with unsupported extensions are rejected rather than guessed.
 
 Supported providers are currently `github` and `gitea`. Omitting `provider` preserves the original behavior and defaults that repository to `github`.
 
@@ -65,8 +65,10 @@ Set webhook secrets for the providers used by your configuration:
 ```bash
 export GITMIRROR_GITHUB_WEBHOOK_SECRET='replace-me'
 export GITMIRROR_GITEA_WEBHOOK_SECRET='replace-me-too'
-go run ./cmd/gitmirror -config gitmirror.json
+go run ./cmd/gitmirror -config gitmirror.toml
 ```
+
+`gitmirror.toml` is now the default config path, so `-config` can be omitted when using that filename.
 
 `GITMIRROR_WEBHOOK_SECRET` remains supported as a legacy alias for the GitHub webhook secret.
 
