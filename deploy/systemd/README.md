@@ -12,35 +12,49 @@ This deployment model runs gitmirror as a dedicated unprivileged `gitmirror` acc
 
 The service intentionally uses a static account rather than `DynamicUser=` because Git/SSH authentication commonly needs durable SSH keys, `known_hosts`, and credential-helper state.
 
-## Install
+## Quick install
 
-Build and install the binary:
-
-```bash
-go build -trimpath -ldflags='-s -w' -o gitmirror ./cmd/gitmirror
-sudo install -o root -g root -m 0755 gitmirror /usr/local/bin/gitmirror
-```
-
-Create the service account and directories:
+From the repository root:
 
 ```bash
-sudo useradd --system --home-dir /var/lib/gitmirror --create-home --shell /usr/sbin/nologin gitmirror
-sudo install -d -o root -g gitmirror -m 0750 /etc/gitmirror
-sudo install -d -o gitmirror -g gitmirror -m 0700 /var/lib/gitmirror
+sudo bash scripts/install.sh
 ```
 
-Install configuration and secrets:
+The installer:
+
+- builds the current checkout with `-trimpath` and stripped debug tables
+- creates the `gitmirror` system user/group if missing
+- creates `/etc/gitmirror` and `/var/lib/gitmirror` with restrictive ownership/modes
+- installs `/usr/local/bin/gitmirror` and the hardened unit
+- creates config/secrets from examples only when those files do not already exist
+- preserves existing configuration, state, SSH credentials, and service identity
+- enables the service
+- starts/restarts it only when a non-empty webhook secret has been configured
+
+Use `--no-start` when staging a deployment:
 
 ```bash
-sudo install -o root -g gitmirror -m 0640 gitmirror.example.toml /etc/gitmirror/gitmirror.toml
-sudo install -o root -g gitmirror -m 0600 deploy/systemd/gitmirror.env.example /etc/gitmirror/gitmirror.env
+sudo bash scripts/install.sh --no-start
 ```
 
-For the systemd deployment, set this in `/etc/gitmirror/gitmirror.toml`:
+If `just` is installed, the equivalent commands are:
+
+```bash
+just install
+just install-no-start
+```
+
+## Configure
+
+For the systemd deployment, `/etc/gitmirror/gitmirror.toml` should use:
 
 ```toml
 data_dir = "/var/lib/gitmirror"
 ```
+
+The installer writes that absolute state path into a fresh config automatically.
+
+Set only the webhook secrets used by the configured providers in `/etc/gitmirror/gitmirror.env`. The checked-in example keeps all secret assignments commented so a fresh install cannot accidentally start with placeholder credentials.
 
 If SSH remotes are used, provision credentials under the service account's home:
 
@@ -52,20 +66,49 @@ sudo install -o gitmirror -g gitmirror -m 0644 /path/to/known_hosts /var/lib/git
 
 Do not disable SSH host-key checking. Populate `known_hosts` from a trusted source and verify host fingerprints before deployment.
 
-Install and start the unit:
+After editing configuration/secrets:
 
 ```bash
-sudo install -o root -g root -m 0644 deploy/systemd/gitmirror.service /etc/systemd/system/gitmirror.service
-sudo systemctl daemon-reload
-sudo systemctl enable --now gitmirror
-```
-
-Inspect status and logs:
-
-```bash
+sudo systemctl restart gitmirror
 systemctl status gitmirror
 journalctl -u gitmirror -f
 ```
+
+or:
+
+```bash
+just restart
+just status
+just logs
+```
+
+## Uninstall
+
+Normal uninstall removes the service and binary while preserving config, persistent mirror state, SSH credentials, and the service account:
+
+```bash
+sudo bash scripts/uninstall.sh
+```
+
+or:
+
+```bash
+just uninstall
+```
+
+To permanently remove everything owned by the deployment, explicitly request a purge:
+
+```bash
+sudo bash scripts/uninstall.sh --purge
+```
+
+or:
+
+```bash
+just purge
+```
+
+`--purge` removes `/etc/gitmirror`, `/var/lib/gitmirror`, and the service user/group. Treat it as destructive.
 
 ## Hardening
 
@@ -87,6 +130,12 @@ After installation, inspect the effective sandbox with:
 
 ```bash
 systemd-analyze security gitmirror.service
+```
+
+or:
+
+```bash
+just security
 ```
 
 Some distributions or older systemd releases may not support every hardening directive in the supplied unit. If systemd rejects a directive, verify the host's systemd version before removing it; do not broadly disable sandboxing just to make the service start.
