@@ -116,7 +116,7 @@ func (s *Syncer) updateBranch(ctx context.Context, repoDir, source, target, ref 
 	if !exists {
 		return nil
 	}
-	if _, err := run(ctx, repoDir, s.secrets, "git", "fetch", "--no-tags", source, "+"+ref+":refs/gitmirror/source); err != nil {
+	if _, err := run(ctx, repoDir, s.secrets, "git", "fetch", "--no-tags", source, "+"+ref+":refs/gitmirror/source"); err != nil {
 		return fmt.Errorf("fetch source branch: %w", err)
 	}
 	targetSHA, targetExists, err := s.remoteSHA(ctx, repoDir, target, ref)
@@ -132,7 +132,7 @@ func (s *Syncer) updateBranch(ctx context.Context, repoDir, source, target, ref 
 	if targetSHA == sourceSHA {
 		return nil
 	}
-	if _, err := run(ctx, repoDir, s.secrets, "git", "fetch", "--no-tags", target, "+"+ref+":refs/gitmirror/target); err != nil {
+	if _, err := run(ctx, repoDir, s.secrets, "git", "fetch", "--no-tags", target, "+"+ref+":refs/gitmirror/target"); err != nil {
 		return fmt.Errorf("fetch target branch: %w", err)
 	}
 	targetBehind, err := isAncestor(ctx, repoDir, targetSHA, sourceSHA)
