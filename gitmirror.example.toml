@@ -1,0 +1,18 @@
+# gitmirror configuration
+# TOML is the preferred format. JSON remains supported for compatibility.
+
+listen = ":8080"
+data_dir = ".gitmirror"
+
+[[pairs]]
+name = "github-gitea-example"
+
+[pairs.left]
+provider = "github"
+full_name = "upstream-owner/private-repo"
+url = "git@github.com:upstream-owner/private-repo.git"
+
+[pairs.right]
+provider = "gitea"
+full_name = "mirror-owner/private-repo"
+url = "git@git.example.com:mirror-owner/private-repo.git"
