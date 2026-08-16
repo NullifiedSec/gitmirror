@@ -1,24 +1,31 @@
 package syncer
 
 import (
+	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
+	"github.com/NullifiedSec/gitmirror/internal/approval"
 	"github.com/NullifiedSec/gitmirror/internal/config"
 	"github.com/NullifiedSec/gitmirror/internal/queue"
 )
 
 type Syncer struct {
-	cfg     config.Config
-	dataDir string
-	secrets []string
+	cfg       config.Config
+	dataDir   string
+	secrets   []string
+	approvals *approval.Store
 }
 
 type pushPayload struct {
@@ -36,7 +43,7 @@ func New(cfg config.Config) *Syncer {
 	for _, p := range cfg.Pairs {
 		secrets = append(secrets, p.Left.URL, p.Right.URL)
 	}
-	return &Syncer{cfg: cfg, dataDir: cfg.DataDir, secrets: secrets}
+	return &Syncer{cfg: cfg, dataDir: cfg.DataDir, secrets: secrets, approvals: approval.New(cfg.DataDir)}
 }
 
 func (s *Syncer) Process(ctx context.Context, e queue.Event) error {
@@ -56,7 +63,7 @@ func (s *Syncer) Process(ctx context.Context, e queue.Event) error {
 		return err
 	}
 	provider := normalizeProvider(e.Provider)
-	pair, source, _, ok := s.findPair(provider, p.Repo.FullName)
+	pair, sourceRepo, targetRepo, ok := s.findPair(provider, p.Repo.FullName)
 	if !ok {
 		return nil
 	}
@@ -64,14 +71,86 @@ func (s *Syncer) Process(ctx context.Context, e queue.Event) error {
 	if err := s.ensureBare(ctx, repoDir, pair); err != nil {
 		return err
 	}
-	sourceRemote, targetRemote := "left", "right"
-	if sameRepo(source, pair.Right) {
-		sourceRemote, targetRemote = targetRemote, sourceRemote
-	}
+	sourceRemote, targetRemote := remoteNames(pair, sourceRepo)
 	if p.Deleted {
-		return s.deleteBranch(ctx, repoDir, sourceRemote, targetRemote, p.Ref, p.Before)
+		return s.deleteBranch(ctx, repoDir, pair, sourceRepo, targetRepo, sourceRemote, targetRemote, p.Ref, p.Before)
 	}
-	return s.updateBranch(ctx, repoDir, sourceRemote, targetRemote, p.Ref)
+	return s.updateBranch(ctx, repoDir, pair, sourceRepo, targetRepo, sourceRemote, targetRemote, p.Ref)
+}
+
+func (s *Syncer) Approve(ctx context.Context, id string) error {
+	req, err := s.approvals.Load(id)
+	if err != nil {
+		return fmt.Errorf("load approval %s: %w", id, err)
+	}
+	pair, ok := s.findPairByName(req.Pair)
+	if !ok {
+		return fmt.Errorf("approval %s references unknown pair %q", id, req.Pair)
+	}
+	sourceRepo, targetRepo, ok := approvalRepos(pair, req)
+	if !ok {
+		return fmt.Errorf("approval %s no longer matches configured repositories", id)
+	}
+	branch := strings.TrimPrefix(req.Ref, "refs/heads/")
+	if !config.RequiresHumanApproval(targetRepo, branch) {
+		return fmt.Errorf("approval %s target branch %s is no longer configured for human approval", id, branch)
+	}
+	repoDir := filepath.Join(s.dataDir, "repos", safePairName(pair.Name)+".git")
+	if err := s.ensureBare(ctx, repoDir, pair); err != nil {
+		return err
+	}
+	sourceRemote, targetRemote := remoteNames(pair, sourceRepo)
+
+	sourceSHA, sourceExists, err := s.remoteSHA(ctx, repoDir, sourceRemote, req.Ref)
+	if err != nil {
+		return err
+	}
+	targetSHA, targetExists, err := s.remoteSHA(ctx, repoDir, targetRemote, req.Ref)
+	if err != nil {
+		return err
+	}
+	if req.Delete {
+		if sourceExists {
+			return fmt.Errorf("approval %s expired: source branch exists again", id)
+		}
+		if !targetExists || targetSHA != req.Before {
+			return fmt.Errorf("approval %s expired: target branch moved", id)
+		}
+		if err := s.strictDelete(ctx, repoDir, targetRemote, req.Ref); err != nil {
+			return err
+		}
+		return s.approvals.Complete(id)
+	}
+
+	if !sourceExists || sourceSHA != req.After {
+		return fmt.Errorf("approval %s expired: source branch moved", id)
+	}
+	if isZeroSHA(req.Before) {
+		if targetExists {
+			return fmt.Errorf("approval %s expired: target branch was created", id)
+		}
+	} else if !targetExists || targetSHA != req.Before {
+		return fmt.Errorf("approval %s expired: target branch moved", id)
+	}
+	if _, err := run(ctx, repoDir, s.secrets, "git", "fetch", "--no-tags", sourceRemote, "+"+req.Ref+":refs/gitmirror/source"); err != nil {
+		return fmt.Errorf("fetch approved source branch: %w", err)
+	}
+	if targetExists {
+		if _, err := run(ctx, repoDir, s.secrets, "git", "fetch", "--no-tags", targetRemote, "+"+req.Ref+":refs/gitmirror/target"); err != nil {
+			return fmt.Errorf("fetch approved target branch: %w", err)
+		}
+		behind, err := isAncestor(ctx, repoDir, targetSHA, sourceSHA)
+		if err != nil {
+			return err
+		}
+		if !behind {
+			return fmt.Errorf("approval %s expired: approved update is no longer a fast-forward", id)
+		}
+	}
+	if err := s.pushOrQuarantine(ctx, repoDir, targetRemote, req.Ref); err != nil {
+		return err
+	}
+	return s.approvals.Complete(id)
 }
 
 func (s *Syncer) findPair(provider, fullName string) (config.Pair, config.Repo, config.Repo, bool) {
@@ -84,6 +163,15 @@ func (s *Syncer) findPair(provider, fullName string) (config.Pair, config.Repo, 
 		}
 	}
 	return config.Pair{}, config.Repo{}, config.Repo{}, false
+}
+
+func (s *Syncer) findPairByName(name string) (config.Pair, bool) {
+	for _, p := range s.cfg.Pairs {
+		if p.Name == name {
+			return p, true
+		}
+	}
+	return config.Pair{}, false
 }
 
 func repoMatches(repo config.Repo, provider, fullName string) bool {
@@ -100,6 +188,23 @@ func normalizeProvider(provider string) string {
 		return config.ProviderGitHub
 	}
 	return provider
+}
+
+func remoteNames(pair config.Pair, source config.Repo) (string, string) {
+	if sameRepo(source, pair.Right) {
+		return "right", "left"
+	}
+	return "left", "right"
+}
+
+func approvalRepos(pair config.Pair, req approval.Request) (config.Repo, config.Repo, bool) {
+	if repoMatches(pair.Left, req.SourceProvider, req.SourceFullName) && repoMatches(pair.Right, req.TargetProvider, req.TargetFullName) {
+		return pair.Left, pair.Right, true
+	}
+	if repoMatches(pair.Right, req.SourceProvider, req.SourceFullName) && repoMatches(pair.Left, req.TargetProvider, req.TargetFullName) {
+		return pair.Right, pair.Left, true
+	}
+	return config.Repo{}, config.Repo{}, false
 }
 
 func (s *Syncer) ensureBare(ctx context.Context, repoDir string, pair config.Pair) error {
@@ -125,7 +230,7 @@ func (s *Syncer) ensureBare(ctx context.Context, repoDir string, pair config.Pai
 	return nil
 }
 
-func (s *Syncer) updateBranch(ctx context.Context, repoDir, source, target, ref string) error {
+func (s *Syncer) updateBranch(ctx context.Context, repoDir string, pair config.Pair, sourceRepo, targetRepo config.Repo, source, target, ref string) error {
 	sourceSHA, exists, err := s.remoteSHA(ctx, repoDir, source, ref)
 	if err != nil {
 		return err
@@ -140,39 +245,40 @@ func (s *Syncer) updateBranch(ctx context.Context, repoDir, source, target, ref 
 	if err != nil {
 		return err
 	}
-	if !targetExists {
-		if _, err := run(ctx, repoDir, s.secrets, "git", "push", target, "refs/gitmirror/source:"+ref); err != nil {
-			return fmt.Errorf("create target branch: %w", err)
+	if targetExists && targetSHA == sourceSHA {
+		return nil
+	}
+	if targetExists {
+		if _, err := run(ctx, repoDir, s.secrets, "git", "fetch", "--no-tags", target, "+"+ref+":refs/gitmirror/target"); err != nil {
+			return fmt.Errorf("fetch target branch: %w", err)
 		}
-		return nil
-	}
-	if targetSHA == sourceSHA {
-		return nil
-	}
-	if _, err := run(ctx, repoDir, s.secrets, "git", "fetch", "--no-tags", target, "+"+ref+":refs/gitmirror/target"); err != nil {
-		return fmt.Errorf("fetch target branch: %w", err)
-	}
-	targetBehind, err := isAncestor(ctx, repoDir, targetSHA, sourceSHA)
-	if err != nil {
-		return err
-	}
-	if targetBehind {
-		if _, err := run(ctx, repoDir, s.secrets, "git", "push", target, "refs/gitmirror/source:"+ref); err != nil {
-			return fmt.Errorf("fast-forward target branch: %w", err)
+		targetBehind, err := isAncestor(ctx, repoDir, targetSHA, sourceSHA)
+		if err != nil {
+			return err
 		}
-		return nil
+		if !targetBehind {
+			sourceBehind, err := isAncestor(ctx, repoDir, sourceSHA, targetSHA)
+			if err != nil {
+				return err
+			}
+			if sourceBehind {
+				return nil
+			}
+			return s.quarantine(ctx, repoDir, target, ref, "diverged")
+		}
 	}
-	sourceBehind, err := isAncestor(ctx, repoDir, sourceSHA, targetSHA)
-	if err != nil {
-		return err
+	branch := strings.TrimPrefix(ref, "refs/heads/")
+	if config.RequiresHumanApproval(targetRepo, branch) {
+		before := targetSHA
+		if !targetExists {
+			before = zeroSHA40()
+		}
+		return s.requestApproval(pair, sourceRepo, targetRepo, ref, before, sourceSHA, false)
 	}
-	if sourceBehind {
-		return nil
-	}
-	return fmt.Errorf("branch %s diverged between %s and %s; refusing destructive update", ref, source, target)
+	return s.pushOrQuarantine(ctx, repoDir, target, ref)
 }
 
-func (s *Syncer) deleteBranch(ctx context.Context, repoDir, source, target, ref, before string) error {
+func (s *Syncer) deleteBranch(ctx context.Context, repoDir string, pair config.Pair, sourceRepo, targetRepo config.Repo, source, target, ref, before string) error {
 	if _, exists, err := s.remoteSHA(ctx, repoDir, source, ref); err != nil {
 		return err
 	} else if exists {
@@ -185,10 +291,121 @@ func (s *Syncer) deleteBranch(ctx context.Context, repoDir, source, target, ref,
 	if before == "" || isZeroSHA(before) || targetSHA != before {
 		return fmt.Errorf("refusing to delete %s: target moved from expected source SHA", ref)
 	}
-	if _, err := run(ctx, repoDir, s.secrets, "git", "push", target, ":"+ref); err != nil {
+	branch := strings.TrimPrefix(ref, "refs/heads/")
+	if config.RequiresHumanApproval(targetRepo, branch) {
+		return s.requestApproval(pair, sourceRepo, targetRepo, ref, targetSHA, zeroSHA40(), true)
+	}
+	return s.strictDelete(ctx, repoDir, target, ref)
+}
+
+func (s *Syncer) requestApproval(pair config.Pair, sourceRepo, targetRepo config.Repo, ref, before, after string, deleteRef bool) error {
+	req := approval.Request{
+		ID:             approvalID(pair.Name, targetRepo, ref, before, after, deleteRef),
+		Pair:           pair.Name,
+		SourceProvider: normalizeProvider(sourceRepo.Provider),
+		SourceFullName: sourceRepo.FullName,
+		TargetProvider: normalizeProvider(targetRepo.Provider),
+		TargetFullName: targetRepo.FullName,
+		Ref:            ref,
+		Before:         before,
+		After:          after,
+		Delete:         deleteRef,
+	}
+	created, err := s.approvals.Create(req)
+	if err != nil {
+		return fmt.Errorf("create human approval request: %w", err)
+	}
+	log.Printf("HIL approval required: id=%s pair=%s target=%s ref=%s %s -> %s delete=%t", created.ID, pair.Name, targetRepo.FullName, ref, shortSHA(before), shortSHA(after), deleteRef)
+	return nil
+}
+
+func (s *Syncer) pushOrQuarantine(ctx context.Context, repoDir, target, ref string) error {
+	safe, reason := s.preflightPush(ctx, repoDir, target, "refs/gitmirror/source:"+ref, false)
+	if !safe {
+		return s.quarantine(ctx, repoDir, target, ref, "preflight-"+reason)
+	}
+	if err := s.actualPush(ctx, repoDir, target, "refs/gitmirror/source:"+ref, false); err != nil {
+		if quarantineErr := s.quarantine(ctx, repoDir, target, ref, "push-failed"); quarantineErr != nil {
+			return fmt.Errorf("target push failed (%v) and quarantine failed: %w", err, quarantineErr)
+		}
+		return nil
+	}
+	return nil
+}
+
+func (s *Syncer) strictDelete(ctx context.Context, repoDir, target, ref string) error {
+	safe, reason := s.preflightPush(ctx, repoDir, target, ":"+ref, true)
+	if !safe {
+		return fmt.Errorf("refusing deletion %s: push preflight complained: %s", ref, reason)
+	}
+	if err := s.actualPush(ctx, repoDir, target, ":"+ref, true); err != nil {
 		return fmt.Errorf("delete target branch: %w", err)
 	}
 	return nil
+}
+
+func (s *Syncer) preflightPush(ctx context.Context, repoDir, remote, refspec string, deletion bool) (bool, string) {
+	stdout, stderr, err := runSplit(ctx, repoDir, s.secrets, "git", "push", "--dry-run", "--porcelain", remote, refspec)
+	if err != nil {
+		return false, "command-failed"
+	}
+	if strings.TrimSpace(stderr) != "" {
+		return false, "stderr-output"
+	}
+	if !porcelainSafe(stdout, deletion) {
+		return false, "unexpected-status"
+	}
+	return true, ""
+}
+
+func (s *Syncer) actualPush(ctx context.Context, repoDir, remote, refspec string, deletion bool) error {
+	stdout, _, err := runSplit(ctx, repoDir, s.secrets, "git", "push", "--porcelain", remote, refspec)
+	if err != nil {
+		return err
+	}
+	if !porcelainSafe(stdout, deletion) {
+		return fmt.Errorf("push returned unexpected porcelain status")
+	}
+	return nil
+}
+
+func porcelainSafe(out string, deletion bool) bool {
+	seen := false
+	for _, line := range strings.Split(out, "\n") {
+		if !strings.Contains(line, "\t") {
+			continue
+		}
+		seen = true
+		flag := line[0]
+		if deletion {
+			if flag != '-' && flag != '=' {
+				return false
+			}
+			continue
+		}
+		if flag != ' ' && flag != '*' && flag != '=' {
+			return false
+		}
+	}
+	return seen
+}
+
+func (s *Syncer) quarantine(ctx context.Context, repoDir, target, originalRef, reason string) error {
+	branch := strings.TrimPrefix(originalRef, "refs/heads/")
+	for i := 0; i < 3; i++ {
+		suffix, err := randomSuffix()
+		if err != nil {
+			return err
+		}
+		name := fmt.Sprintf("gitmirror/quarantine/%s-%d-%s", sanitizeBranchPart(branch), time.Now().UTC().Unix(), suffix)
+		ref := "refs/heads/" + name
+		stdout, stderr, err := runSplit(ctx, repoDir, s.secrets, "git", "push", "--porcelain", target, "refs/gitmirror/source:"+ref)
+		if err == nil && strings.TrimSpace(stderr) == "" && porcelainSafe(stdout, false) {
+			log.Printf("unsafe update diverted to %s (%s)", ref, reason)
+			return nil
+		}
+	}
+	return fmt.Errorf("unable to create quarantine branch for %s after unsafe update: %s", originalRef, reason)
 }
 
 func (s *Syncer) remoteSHA(ctx context.Context, repoDir, remote, ref string) (string, bool, error) {
@@ -230,24 +447,68 @@ func checkBranch(ctx context.Context, branch string) error {
 }
 
 func run(ctx context.Context, dir string, secrets []string, name string, args ...string) (string, error) {
+	stdout, stderr, err := runSplit(ctx, dir, secrets, name, args...)
+	text := strings.TrimSpace(strings.Join([]string{stdout, stderr}, "\n"))
+	if err != nil {
+		return text, fmt.Errorf("%s: %w: %s", name, err, text)
+	}
+	return text, nil
+}
+
+func runSplit(ctx context.Context, dir string, secrets []string, name string, args ...string) (string, string, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
-	out, err := cmd.CombinedOutput()
-	text := string(out)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	return redact(stdout.String(), secrets), redact(stderr.String(), secrets), err
+}
+
+func redact(text string, secrets []string) string {
 	for _, secret := range secrets {
 		if secret != "" {
 			text = strings.ReplaceAll(text, secret, "[REDACTED_REMOTE]")
 		}
 	}
-	if err != nil {
-		return text, fmt.Errorf("%s: %w: %s", name, err, strings.TrimSpace(text))
-	}
-	return text, nil
+	return text
 }
 
 func safePairName(s string) string {
 	sum := sha256.Sum256([]byte(s))
 	return fmt.Sprintf("%x", sum[:12])
 }
+
+func approvalID(pair string, target config.Repo, ref, before, after string, deleteRef bool) string {
+	value := fmt.Sprintf("%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%t", pair, normalizeProvider(target.Provider), strings.ToLower(target.FullName), ref, before, after, deleteRef)
+	sum := sha256.Sum256([]byte(value))
+	return fmt.Sprintf("hil-%x", sum[:12])
+}
+
+func randomSuffix() (string, error) {
+	var b [6]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b[:]), nil
+}
+
+func sanitizeBranchPart(s string) string {
+	s = strings.ReplaceAll(s, "/", "-")
+	s = strings.ReplaceAll(s, " ", "-")
+	if s == "" {
+		return "branch"
+	}
+	return s
+}
+
+func shortSHA(sha string) string {
+	if len(sha) <= 12 {
+		return sha
+	}
+	return sha[:12]
+}
+
+func zeroSHA40() string { return strings.Repeat("0", 40) }
 
 func isZeroSHA(s string) bool { return strings.Trim(s, "0") == "" }
