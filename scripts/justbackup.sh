@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 CONFIG_PATH="${GITMIRROR_CONFIG:-$ROOT_DIR/gitmirror.toml}"
 OUTPUT_ROOT="${GITMIRROR_BACKUP_DIR:-$ROOT_DIR/backups}"
+ZSTD_LEVEL="${GITMIRROR_BACKUP_ZSTD_LEVEL:-3}"
 TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 SNAPSHOT_DIR="$OUTPUT_ROOT/$TIMESTAMP"
 WORK_DIR="$(mktemp -d)"
@@ -11,15 +12,19 @@ trap 'rm -rf "$WORK_DIR"' EXIT
 
 usage() {
   cat <<'EOF'
-Usage: scripts/justbackup.sh [--config PATH] [--output DIR]
+Usage: scripts/justbackup.sh [--config PATH] [--output DIR] [--zstd-level N]
 
-Creates one portable Git bundle per repository tracked by gitmirror and writes
-all bundles into a timestamped snapshot directory. Repository credentials are
-used only by Git and are not written into the manifest.
+Creates one portable Git bundle per repository tracked by gitmirror, verifies it,
+then compresses it with zstd into a timestamped snapshot directory. Repository
+credentials are used only by Git and are not written into the manifest.
+
+Git bundles already contain compressed packfiles, so the default zstd level is
+intentionally modest to avoid wasting CPU for tiny additional gains.
 
 Environment overrides:
-  GITMIRROR_CONFIG      config path (default: ./gitmirror.toml)
-  GITMIRROR_BACKUP_DIR backup root (default: ./backups)
+  GITMIRROR_CONFIG             config path (default: ./gitmirror.toml)
+  GITMIRROR_BACKUP_DIR        backup root (default: ./backups)
+  GITMIRROR_BACKUP_ZSTD_LEVEL zstd level (default: 3)
 EOF
 }
 
@@ -36,6 +41,11 @@ while [[ $# -gt 0 ]]; do
       SNAPSHOT_DIR="$OUTPUT_ROOT/$TIMESTAMP"
       shift 2
       ;;
+    --zstd-level)
+      [[ $# -ge 2 ]] || { echo "--zstd-level requires a value" >&2; exit 2; }
+      ZSTD_LEVEL="$2"
+      shift 2
+      ;;
     -h|--help)
       usage
       exit 0
@@ -48,7 +58,9 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-for cmd in git python3 date mktemp; do
+[[ "$ZSTD_LEVEL" =~ ^-?[0-9]+$ ]] || { echo "invalid zstd level: $ZSTD_LEVEL" >&2; exit 2; }
+
+for cmd in git python3 date mktemp zstd; do
   command -v "$cmd" >/dev/null 2>&1 || { echo "required command not found: $cmd" >&2; exit 1; }
 done
 
@@ -113,18 +125,22 @@ for record in "${REPOS[@]}"; do
   safe_provider="$(sanitize "$provider")"
   safe_name="$(sanitize "$full_name")"
   bundle_name="${safe_provider}__${safe_name}.bundle"
+  compressed_name="${bundle_name}.zst"
   mirror_dir="$WORK_DIR/${safe_provider}__${safe_name}.git"
+  bundle_path="$WORK_DIR/$bundle_name"
 
   echo "backing up ${provider}:${full_name}"
   git clone --mirror --quiet "$url" "$mirror_dir"
-  git -C "$mirror_dir" bundle create "$SNAPSHOT_DIR/$bundle_name" --all
-  git bundle verify "$SNAPSHOT_DIR/$bundle_name" >/dev/null
+  git -C "$mirror_dir" bundle create "$bundle_path" --all
+  git bundle verify "$bundle_path" >/dev/null
+  zstd -q -T0 -"$ZSTD_LEVEL" --no-progress -o "$SNAPSHOT_DIR/$compressed_name" "$bundle_path"
 
   printf '%s\t%s\t%s\t%s\n' \
-    "$provider" "$full_name" "$bundle_name" "$TIMESTAMP" >>"$MANIFEST"
+    "$provider" "$full_name" "$compressed_name" "$TIMESTAMP" >>"$MANIFEST"
 done
 
-chmod 0600 "$SNAPSHOT_DIR"/*.bundle "$MANIFEST"
+chmod 0600 "$SNAPSHOT_DIR"/*.bundle.zst "$MANIFEST"
 
 echo "backup complete: $SNAPSHOT_DIR"
 echo "manifest: $MANIFEST"
+echo "restore: zstd -d <repo>.bundle.zst -o <repo>.bundle && git clone <repo>.bundle <dir>"
