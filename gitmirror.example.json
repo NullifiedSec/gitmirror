@@ -1,0 +1,17 @@
+{
+  "listen": ":8080",
+  "data_dir": ".gitmirror",
+  "pairs": [
+    {
+      "name": "example",
+      "left": {
+        "full_name": "upstream-owner/private-repo",
+        "url": "git@github.com:upstream-owner/private-repo.git"
+      },
+      "right": {
+        "full_name": "your-org/private-repo",
+        "url": "git@github.com:your-org/private-repo.git"
+      }
+    }
+  ]
+}
