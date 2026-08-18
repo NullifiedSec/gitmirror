@@ -28,7 +28,8 @@ func TestBootstrapSeedsCompletelyEmptyRightFromLeft(t *testing.T) {
 	mainSHA := gitOut(t, work, "rev-parse", "main")
 	developSHA := gitOut(t, work, "rev-parse", "develop")
 
-	s := New(testConfig(root, left, right))
+	cfg := testConfig(root, left, right)
+	s := New(cfg)
 	if err := s.Bootstrap(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +44,7 @@ func TestBootstrapSeedsCompletelyEmptyRightFromLeft(t *testing.T) {
 		t.Fatalf("empty right develop was not seeded: got %s want %s", got, developSHA)
 	}
 
-	repoDir := filepath.Join(root, "data", "repos", "test.git")
+	repoDir := filepath.Join(cfg.DataDir, "repos", safePairName(cfg.Pairs[0].Name)+".git")
 	if _, err := os.Stat(filepath.Join(repoDir, "gitmirror-bootstrap-v2")); err != nil {
 		t.Fatalf("bootstrap marker: %v", err)
 	}
@@ -115,12 +116,13 @@ func TestBootstrapPreservesBothWhenEitherAlreadyContainsRefs(t *testing.T) {
 		t.Fatal("test setup unexpectedly produced identical remote histories")
 	}
 
-	s := New(testConfig(root, left, right))
+	cfg := testConfig(root, left, right)
+	s := New(cfg)
 	if err := s.Bootstrap(ctx); err != nil {
 		t.Fatal(err)
 	}
 
-	repoDir := filepath.Join(root, "data", "repos", "test.git")
+	repoDir := filepath.Join(cfg.DataDir, "repos", safePairName(cfg.Pairs[0].Name)+".git")
 	if got := gitOut(t, repoDir, "rev-parse", "refs/gitmirror/bootstrap/left/main"); got != leftSHA {
 		t.Fatalf("left bootstrap sha = %s, want %s", got, leftSHA)
 	}

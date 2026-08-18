@@ -60,6 +60,22 @@ func (r *Runner) Run(ctx context.Context) {
 	<-ctx.Done()
 }
 
+// ReconcileAll performs one full bidirectional reconciliation pass over every
+// configured pair, regardless of whether polling is enabled for either side.
+// It deliberately reuses the same comparison/snapshot/event path as polling so
+// manual recovery from missed webhooks cannot bypass normal sync safety rules.
+func (r *Runner) ReconcileAll(ctx context.Context) error {
+	for _, pair := range r.cfg.Pairs {
+		if err := r.pollOnce(ctx, pair.Left, pair.Right); err != nil {
+			return fmt.Errorf("reconcile %s left->right: %w", pair.Name, err)
+		}
+		if err := r.pollOnce(ctx, pair.Right, pair.Left); err != nil {
+			return fmt.Errorf("reconcile %s right->left: %w", pair.Name, err)
+		}
+	}
+	return nil
+}
+
 func (r *Runner) runRepo(ctx context.Context, source, target config.Repo) {
 	poll := func() {
 		if err := r.pollOnce(ctx, source, target); err != nil && !errors.Is(err, context.Canceled) {
@@ -98,9 +114,6 @@ func (r *Runner) pollOnce(ctx context.Context, source, target config.Repo) error
 		return err
 	}
 
-	// Reconcile every live source branch against the counterpart on every poll.
-	// The snapshot is only used to safely recognize source-side deletions; it is
-	// not the authority for deciding whether the destination needs repair.
 	ordered := make([]string, 0, len(current))
 	for ref := range current {
 		ordered = append(ordered, ref)
@@ -122,10 +135,6 @@ func (r *Runner) pollOnce(ctx context.Context, source, target config.Repo) error
 		}
 	}
 
-	// A deletion is only propagated when this polled source previously had the
-	// branch and the counterpart still points at exactly that previous SHA. This
-	// preserves the existing deletion safety rule and avoids deleting branches
-	// that were independently created on the other side.
 	deletedRefs := make([]string, 0)
 	for ref, previousSHA := range previous {
 		if _, stillExists := current[ref]; stillExists {

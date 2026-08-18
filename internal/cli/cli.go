@@ -52,6 +52,8 @@ func (a *App) Run(args []string) (handled bool, exitCode int) {
 		runErr = a.runApprovals(configPath, rest[1:])
 	case "status":
 		runErr = a.runStatus(configPath)
+	case "sync":
+		runErr = a.runSync(configPath, rest[1:])
 	default:
 		runErr = fmt.Errorf("unknown command %q", rest[0])
 	}
@@ -103,6 +105,7 @@ func (a *App) usage() {
 Usage:
   gitmirror [--config PATH] serve
   gitmirror [--config PATH] status
+  gitmirror [--config PATH] sync
   gitmirror [--config PATH] config validate
   gitmirror [--config PATH] pair list
   gitmirror [--config PATH] pair add
